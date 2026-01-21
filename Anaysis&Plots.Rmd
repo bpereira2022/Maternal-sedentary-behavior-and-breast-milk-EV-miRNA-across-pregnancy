@@ -1,0 +1,441 @@
+---
+title: "Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence
+  for early-mid gestation sensitivity"
+author: "Beatriz B. Elliott"
+date: "2026-01-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Quality Check
+```{r}
+# ---- Package Installation and Loading ----
+if (!requireNamespace("DESeq2")) install.packages("BiocManager"); BiocManager::install("DESeq2")
+if (!requireNamespace("pheatmap")) install.packages("pheatmap")
+if (!requireNamespace("RColorBrewer")) install.packages("RColorBrewer")
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("vsn")) BiocManager::install("vsn")
+
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggplot2)
+library(vsn)
+
+# ---- Load Data ----
+metadata <- read.csv("ColData.csv")
+Count_Data <- read.csv("Merged_Count.csv", row.names = 1, header = TRUE, check.names = FALSE)
+
+# ---- Create DESeqDataSet ----
+dds <- DESeqDataSetFromMatrix(countData = Count_Data,
+                              colData = metadata,
+                              design = ~ 1)  # no model yet, just QC
+
+# ---- Filter Low Count Genes ----
+dds <- dds[rowSums(counts(dds) >= 5) >= 3, ]
+miRNA_for_background <- rownames(dds)  # Background list for DIANA
+
+# Save the background miRNAs
+write.table(
+  miRNA_for_background,
+  file = "DIANA_background_miRNAs.txt",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+# ---- Basic Statistics ----
+# Count statistics
+max_count <- max(counts(dds))  # Maximum count
+min_count <- min(counts(dds))  # Minimum count
+median_count <- median(colSums(counts(dds)))  # Median library size
+
+cat("Max counts:", max_count, "\nMin counts:", min_count, "\nMedian library size:", median_count, "\n")
+
+# Library size distribution (raw counts)
+raw_library_sizes <- colSums(counts(dds))
+barplot(
+  raw_library_sizes,
+  las = 2,
+  main = "Library sizes",
+  ylab = "Total counts"
+)
+
+# ---- Raw and Normalized Counts Comparison ----
+# Estimate size factors
+dds_fit <- estimateSizeFactors(dds)
+
+# Total counts: raw and normalized
+raw_totals <- colSums(counts(dds, normalized = FALSE))
+norm_totals <- colSums(counts(dds_fit, normalized = TRUE))
+
+# Combine totals for plotting
+all_totals <- rbind(raw = raw_totals, normalized = norm_totals)
+
+# Barplot comparison
+barplot(
+  all_totals,
+  beside = TRUE,
+  las = 2,
+  col = c("skyblue", "lightgreen"),
+  main = "Library sizes: raw vs normalized",
+  ylab = "Total counts"
+)
+legend(
+  "topright",
+  legend = c("Raw", "Normalized"),
+  fill = c("skyblue", "lightgreen")
+)
+```
+
+
+PCA Analysis
+```{r}
+# PCA (numerical) using VST + prcomp on top variable genes
+library(DESeq2)
+library(matrixStats)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+
+set.seed(123)
+
+# ---- 0. Load Data & Align ----
+counts <- read.csv("Merged_Count.csv", row.names = 1, check.names = FALSE)
+coldata <- read.csv("ColData.csv", row.names = 1)
+common <- intersect(colnames(counts), rownames(coldata))
+counts <- counts[, common, drop = FALSE]
+coldata <- coldata[common, , drop = FALSE]
+
+# ---- 1. DESeqDataSet and Filter Low-count Features ----
+dds0 <- DESeqDataSetFromMatrix(countData = counts, colData = coldata, design = ~ 1)
+keep <- rowSums(counts(dds0) >= 5) >= 3
+dds0 <- dds0[keep, ]
+
+# ---- 2. Variance Stabilizing Transformation (VST) ----
+vsd <- varianceStabilizingTransformation(dds0, blind = TRUE)
+mat <- assay(vsd)
+
+# ---- 3. Select Top Variable Genes ----
+n_top <- 500
+rv <- rowVars(mat)
+top_genes <- order(rv, decreasing = TRUE)[seq_len(min(n_top, length(rv)))]
+mat_top <- mat[top_genes, , drop = FALSE]
+
+# ---- 4. Perform PCA ----
+pc <- prcomp(t(mat_top), center = TRUE, scale. = TRUE)
+percentVar <- 100 * (pc$sdev^2) / sum(pc$sdev^2)
+pvar_df <- tibble(PC = paste0("PC", seq_along(percentVar)), PercentVariance = percentVar)
+
+# Sample scores
+scores <- as.data.frame(pc$x) %>%
+  rownames_to_column("Sample") %>%
+  left_join(rownames_to_column(as.data.frame(coldata), var = "Sample"), by = "Sample")
+
+# Gene loadings
+loadings <- as.data.frame(pc$rotation) %>%
+  rownames_to_column("Feature")
+
+# ---- 5. Save Outputs (Uncomment to save) ----
+# write.csv(pvar_df, "PCA_percent_variance.csv", row.names = FALSE)
+# write.csv(scores, "PCA_sample_scores.csv", row.names = FALSE)
+# write.csv(loadings, "PCA_feature_loadings_topGenes.csv", row.names = FALSE)
+
+# ---- 6. Correlation Analysis ----
+run_correlation <- function(x, y, method = c("pearson", "spearman"), B = 5000, exact = FALSE) {
+  method <- match.arg(method)
+  complete_idx <- complete.cases(x, y)
+  x <- x[complete_idx]
+  y <- y[complete_idx]
+  
+  # Correlation test
+  cor_res <- cor.test(x, y, method = method, exact = if (method == "spearman") exact else NULL)
+  
+  # Bootstrap
+  boot_vals <- replicate(B, {
+    idx <- sample(seq_along(x), replace = TRUE)
+    cor(x[idx], y[idx], method = method)
+  })
+  
+  boot_CI <- quantile(boot_vals, probs = c(0.025, 0.975))
+  
+  list(cor_test = cor_res, boot_CI = boot_CI, n = length(x))
+}
+
+# Run correlation analysis (Pearson & Spearman)
+PCs <- c("PC1", "PC2")
+predictor <- "mvpa_trimester2"
+B <- 5000
+
+for (pc in PCs) {
+  # Pearson correlation
+  res_pearson <- run_correlation(scores[[pc]], coldata[[predictor]], method = "pearson", B = B)
+  cat("\nPearson Correlation -", pc, "\n")
+  print(res_pearson$cor_test)
+  cat("Bootstrap 95% CI:\n")
+  print(res_pearson$boot_CI)
+  
+  # Spearman correlation
+  res_spearman <- run_correlation(scores[[pc]], coldata[[predictor]], method = "spearman", exact = TRUE, B = B)
+  cat("\nSpearman Correlation -", pc, "\n")
+  print(res_spearman$cor_test)
+  cat("Bootstrap 95% CI:\n")
+  print(res_spearman$boot_CI)
+}
+
+# ---- 7. PCA Plot with Convex Hull ----
+df <- scores %>%
+  mutate(
+    mvpa_group = factor(
+      coldata$mvpa_quartile_trimester2,
+      levels = c("Lower than or equal to 12.9", "Interquartile range", "Greater than or equal to 41.4")
+    )
+  )
+
+hull_df <- df %>%
+  group_by(mvpa_group) %>%
+  filter(n() >= 3) %>%
+  slice(chull(PC1, PC2))
+
+ggplot(df, aes(PC1, PC2, color = mvpa_group)) +
+  geom_point(size = 3) +
+  geom_polygon(data = hull_df, aes(fill = mvpa_group), alpha = 0.25, color = NA) +
+  scale_color_manual(values = c("Lower than or equal to 12.9" = "red", "Interquartile range" = "darkgreen", "Greater than or equal to 41.4" = "royalblue")) +
+  scale_fill_manual(values = c("Lower than or equal to 12.9" = "red", "Interquartile range" = "darkgreen", "Greater than or equal to 41.4" = "royalblue")) +
+  theme_classic() +
+  labs(color = "SED60+ T2 Quartile", fill = "SED60+ T2 Quartile")
+
+# ---- 8. Regression Plot ----
+plot_df <- scores %>%
+  mutate(
+    Predictor = coldata[[predictor]],
+    Quartile = factor(coldata$mvpa_quartile_trimester2)
+  )
+
+ggplot(plot_df, aes(x = Predictor, y = PC2, color = Quartile)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", color = "black", se = TRUE) +
+  scale_color_manual(values = c("Lower than or equal to 12.9" = "red", "Interquartile range" = "darkgreen", "Greater than or equal to 41.4" = "royalblue")) +
+  labs(
+    title = "PC2 vs. MVPA (T1) by Quartile",
+    x = "Minutes/day in moderate to vigorous activity",
+    y = "PC2",
+    color = "Quartile"
+  ) +
+  theme_classic()
+```
+
+miRNA Data Analysis
+```{r}
+# ---- Load Libraries ----
+library(DESeq2)
+library(tidyverse)
+
+# ---- Load Data ----
+counts <- read.csv("Merged_Count.csv", row.names = 1, header = TRUE, check.names = FALSE)
+coldata <- read.csv("ColData.csv", row.names = 1)
+
+# ---- Sedentary Behavior Analysis ----
+# Trimester 1
+coldata_filt <- coldata %>%
+  dplyr::select(sed60num_quartile_trimester1) %>%
+  filter(sed60num_quartile_trimester1 != "Interquartile range") %>%
+  mutate(SedGroupT1 = ifelse(grepl("Lower", sed60num_quartile_trimester1),
+                             "Low", "High")) %>%
+  dplyr::select(SedGroupT1)
+
+rownames(coldata_filt) <- rownames(coldata)[rownames(coldata) %in% rownames(coldata_filt)]
+coldata_filt$SedGroupT1 <- factor(coldata_filt$SedGroupT1, levels = c("Low", "High"))
+
+counts_filt <- counts[, rownames(coldata_filt)]
+dds <- DESeqDataSetFromMatrix(countData = counts_filt, colData = coldata_filt, design = ~ SedGroupT1)
+dds <- estimateSizeFactors(dds)
+idx <- rowSums(counts(dds, normalized = TRUE) >= 5) >= 3
+dds <- dds[idx,]
+dds$SedGroupT1 <- relevel(dds$SedGroupT1, ref = "High")
+dds <- DESeq(dds)
+results_activity_T1 <- results(dds, contrast = c("SedGroupT1", "Low", "High"))
+results_activity_T1_DEGs_NAomit <- na.omit(results_activity_T1[which(results_activity_T1$padj < 0.10), ])
+write.csv(as.data.frame(results_activity_T1_DEGs_NAomit), "results_activity_T1_DEGs_NAomit.csv")
+
+# Trimester 2
+coldata_filt <- coldata %>%
+  dplyr::select(sed60num_quartile_trimester2) %>%
+  filter(sed60num_quartile_trimester2 != "Interquartile range") %>%
+  mutate(SedGroupT2 = ifelse(grepl("Lower", sed60num_quartile_trimester2),
+                             "Low", "High")) %>%
+  dplyr::select(SedGroupT2)
+
+rownames(coldata_filt) <- rownames(coldata)[rownames(coldata) %in% rownames(coldata_filt)]
+coldata_filt$SedGroupT2 <- factor(coldata_filt$SedGroupT2, levels = c("Low", "High"))
+
+counts_filt <- counts[, rownames(coldata_filt)]
+dds <- DESeqDataSetFromMatrix(countData = counts_filt, colData = coldata_filt, design = ~ SedGroupT2)
+dds <- estimateSizeFactors(dds)
+idx <- rowSums(counts(dds, normalized = TRUE) >= 5) >= 3
+dds <- dds[idx,]
+dds$SedGroupT2 <- relevel(dds$SedGroupT2, ref = "High")
+dds <- DESeq(dds)
+results_activity_T2 <- results(dds, contrast = c("SedGroupT2", "Low", "High"))
+results_activity_T2_DEGs_NAomit <- na.omit(results_activity_T2[which(results_activity_T2$padj < 0.10), ])
+write.csv(as.data.frame(results_activity_T2_DEGs_NAomit), "results_activity_T2_DEGs_NAomit.csv")
+
+# Trimester 3
+coldata_filt <- coldata %>%
+  dplyr::select(sed60num_quartile_trimester3) %>%
+  filter(sed60num_quartile_trimester3 != "Interquartile range") %>%
+  mutate(SedGroupT3 = ifelse(grepl("Lower", sed60num_quartile_trimester3),
+                             "Low", "High")) %>%
+  dplyr::select(SedGroupT3)
+
+rownames(coldata_filt) <- rownames(coldata)[rownames(coldata) %in% rownames(coldata_filt)]
+coldata_filt$SedGroupT3 <- factor(coldata_filt$SedGroupT3, levels = c("Low", "High"))
+
+counts_filt <- counts[, rownames(coldata_filt)]
+dds <- DESeqDataSetFromMatrix(countData = counts_filt, colData = coldata_filt, design = ~ SedGroupT3)
+dds <- estimateSizeFactors(dds)
+idx <- rowSums(counts(dds, normalized = TRUE) >= 5) >= 3
+dds <- dds[idx,]
+dds$SedGroupT3 <- relevel(dds$SedGroupT3, ref = "High")
+dds <- DESeq(dds)
+results_activity_T3 <- results(dds, contrast = c("SedGroupT3", "Low", "High"))
+results_activity_T3_DEGs_NAomit <- na.omit(results_activity_T3[which(results_activity_T3$padj < 0.10), ])
+write.csv(as.data.frame(results_activity_T3_DEGs_NAomit), "results_activity_T3_DEGs_NAomit.csv")
+
+# Postpartum
+coldata_filt <- coldata %>%
+  dplyr::select(sed60num_quartile_postpartum) %>%
+  filter(sed60num_quartile_postpartum != "Interquartile range") %>%
+  mutate(SedGroupPP = ifelse(grepl("Lower", sed60num_quartile_postpartum),
+                             "Low", "High")) %>%
+  dplyr::select(SedGroupPP)
+
+rownames(coldata_filt) <- rownames(coldata)[rownames(coldata) %in% rownames(coldata_filt)]
+coldata_filt$SedGroupPP <- factor(coldata_filt$SedGroupPP, levels = c("Low", "High"))
+
+counts_filt <- counts[, rownames(coldata_filt)]
+dds <- DESeqDataSetFromMatrix(countData = counts_filt, colData = coldata_filt, design = ~ SedGroupPP)
+dds <- estimateSizeFactors(dds)
+idx <- rowSums(counts(dds, normalized = TRUE) >= 5) >= 3
+dds <- dds[idx,]
+dds$SedGroupPP <- relevel(dds$SedGroupPP, ref = "High")
+dds <- DESeq(dds)
+results_activity_PP <- results(dds, contrast = c("SedGroupPP", "Low", "High"))
+results_activity_PP_DEGs_NAomit <- na.omit(results_activity_PP[which(results_activity_PP$padj < 0.10), ])
+write.csv(as.data.frame(results_activity_PP_DEGs_NAomit), "results_activity_PP_DEGs_NAomit.csv")
+
+# ---- Active Behavior Analysis ----
+# Trimester 1
+coldata_filt <- coldata %>%
+  dplyr::select(mvpa_quartile_trimester1) %>%
+  filter(mvpa_quartile_trimester1 != "Interquartile range") %>%
+  mutate(ActiveGroupT1 = ifelse(grepl("Lower", mvpa_quartile_trimester1),
+                                "Low", "High")) %>%
+  dplyr::select(ActiveGroupT1)
+
+rownames(coldata_filt) <- rownames(coldata)[rownames(coldata) %in% rownames(coldata_filt)]
+coldata_filt$ActiveGroupT1 <- factor(coldata_filt$ActiveGroupT1, levels = c("Low", "High"))
+
+counts_filt <- counts[, rownames(coldata_filt)]
+dds <- DESeqDataSetFromMatrix(countData = counts_filt, colData = coldata_filt, design = ~ ActiveGroupT1)
+dds <- estimateSizeFactors(dds)
+idx <- rowSums(counts(dds, normalized = TRUE) >= 5) >= 3
+dds <- dds[idx,]
+dds$ActiveGroupT1 <- relevel(dds$ActiveGroupT1, ref = "Low")
+dds <- DESeq(dds)
+results_mvpa_T1 <- results(dds, contrast = c("ActiveGroupT1", "High", "Low"))
+results_mvpa_T1_DEGs_NAomit <- na.omit(results_mvpa_T1[which(results_mvpa_T1$padj < 0.10), ])
+write.csv(as.data.frame(results_mvpa_T1_DEGs_NAomit), "results_mvpa_T1_DEGs_NAomit.csv")
+
+# Additional analysis for Active Behavior (Trimester 2, 3, and Postpartum) would follow the same pattern,
+# using `mvpa_quartile_trimester2`, `mvpa_quartile_trimester3`, and `mvpa_quartile_postpartum`.
+```
+
+Volcano Plot
+```{r}
+# ---- Load Library ----
+library(EnhancedVolcano)
+
+# ---- Define Volcano Plot Function ----
+generate_volcano_plot <- function(results, 
+                                  title, 
+                                  subtitle, 
+                                  pval_cutoff = 0.10, 
+                                  fc_cutoff = 0.10, 
+                                  ylim_range = c(0, 4), 
+                                  xlim_range = c(-4, 6),
+                                  point_size = 1.0, 
+                                  label_size = 4.0, 
+                                  alpha = 0.5, 
+                                  max_overlaps = 80, 
+                                  legend_labels = c("NS", "Log2FC", "P-value", "P-value + Log2FC"),
+                                  legend_position = "right") {
+  # Remove NAs and convert results to a DataFrame
+  results_naomit <- na.omit(results)
+  res_df <- as.data.frame(results_naomit)
+  
+  # Extract significant candidates
+  sig_genes <- res_df %>%
+    filter(padj < pval_cutoff) %>%
+    rownames()
+  
+  # Ensure log2FoldChange and padj columns are properly formatted
+  res_df$log2FoldChange <- as.numeric(res_df$log2FoldChange)
+  res_df$padj <- as.numeric(res_df$padj)
+  
+  # Plot using EnhancedVolcano
+  EnhancedVolcano(
+    res_df,
+    lab = rownames(res_df),                     # Gene labels
+    x = "log2FoldChange",                       # X-axis: Log2 fold change
+    y = "padj",                                 # Y-axis: Adjusted p-value
+    title = title,                              # Main Title
+    subtitle = subtitle,                        # Subtitle
+    selectLab = sig_genes,                      # Genes to label
+    pCutoff = pval_cutoff,                      # P-value significance threshold
+    FCcutoff = fc_cutoff,                       # Fold-change significance threshold
+    pointSize = point_size,                     # Adjust point size
+    labSize = label_size,                       # Label size
+    colAlpha = alpha,                           # Point transparency
+    legendLabels = legend_labels,               # Legend labels
+    legendPosition = legend_position,           # Legend position
+    ylim = ylim_range,                          # Y-axis range
+    xlim = xlim_range,                          # X-axis range
+    drawConnectors = TRUE,                      # Draw lines to labels
+    col = c("gray", "blue", "green", "purple"), # Point colors: NS, Down, Up, Both
+    max.overlaps = max_overlaps                 # Maximum label overlaps
+  )
+}
+```
+
+Bubble Plot
+```{r}
+# ---- Load Library ----
+library(ggplot2)
+library(readr)
+library(dplyr)
+
+# Load data
+bubble_data <- read_csv("T2_sednum60_pathways.csv")
+
+# Convert pathway name to a factor, organized by timepoint, then significance
+bubble_data$`GO Biological Process Complete Term` <- factor(bubble_data$`GO Biological Process Complete Term`, 
+                           levels = rev(unique(bubble_data %>% arrange(Bonferroni) %>% pull(`GO Biological Process Complete Term`))))
+
+# Plot bubble plot with fold enrichment instead of count
+ggplot(bubble_data, aes(x = "Targets of upregulated miRNAs of:", y = `GO Biological Process Complete Term`)) +
+  geom_point(aes(size = `Fold Enrichment`, color = -log10(Bonferroni))) +
+  scale_color_viridis_c(option = "viridis", name = "-log10(Bonferroni)") +
+  scale_size_continuous(name = "Fold Enrichment") +
+  theme_minimal() +
+  labs(
+    title = "Top Enriched Pathways in Trimester Two",
+    x = "minutes/day in bouts ≥60 min in sedentary bouts",
+    y = "Enriched GO Term"
+  ) +
+  theme(axis.text.y = element_text(size = 9))
+```
+
