@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# Input and Output Directories
+INPUTDIR="/Users/bpereira/Desktop/nourishment_24_7/lane1"
+OUTPUTDIR="/Users/bpereira/Desktop/nourishment_24_7/Analysis"
+HUMANMIRBASEINDEX="/Users/bpereira/Desktop/MDD/databases/miRBase"
+
+# Create necessary directories
+mkdir -p $INPUTDIR/QCReports
+mkdir -p $OUTPUTDIR/maturemiRNAcounts
+mkdir -p $OUTPUTDIR/genome-miRNAcounts
+
+# Remove unwanted file
+rm -f Undetermined_S0_L001_R1_001.fastq.gz
+
+# Process each sample
+for SAMPLE in 02-SH_L1 06-KS_L1; do
+    echo "Processing sample: ${SAMPLE}"
+
+    # Step 1: Quality Control with FastQC
+    fastqc -o "$INPUTDIR/QCReports" "$INPUTDIR/${SAMPLE}.fastq.gz" -t 16
+
+    # Create Output Directory for the Sample
+    mkdir -p "$OUTPUTDIR/$SAMPLE"
+
+    # Step 2: Trim Adapters with bbduk.sh
+    bbduk.sh -Xmx27g \
+        in="$INPUTDIR/${SAMPLE}.fastq.gz" \
+        out="$OUTPUTDIR/$SAMPLE/${SAMPLE}-Trimmed.fastq" \
+        literal=AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC \
+        ktrim=r k=21 mink=11 hdist=2
+
+    # Step 3: Filter Reads by Length with Cutadapt
+    cutadapt --minimum-length=18 --maximum-length=30 \
+        -o "$OUTPUTDIR/$SAMPLE/${SAMPLE}-min18max30L.fastq" \
+        "$OUTPUTDIR/$SAMPLE/${SAMPLE}-Trimmed.fastq" > "$OUTPUTDIR/$SAMPLE/${SAMPLE}-directUMIextracted-readlengthfilter-cutadapt.log"
+
+    # Step 4: Align Reads with Bowtie
+    bowtie -n 0 -l 32 --norc --best --strata -m 1 --threads 16 \
+        "$HUMANMIRBASEINDEX/only_human_mirna_DNA" \
+        -q "$OUTPUTDIR/$SAMPLE/${SAMPLE}-min18max30L.fastq" \
+        --un "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-unalignedReads-bowtie1-beststratam1.fastq" \
+        -S "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-aligned-bowtie1-beststratam1.sam" \
+        2> "$OUTPUTDIR/$SAMPLE/${SAMPLE}-bowtie-maturemiRNA-beststratam1.log"
+
+    # Step 5: Convert SAM to BAM, Sort, and Index
+    samtools sort "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-aligned-bowtie1-beststratam1.sam" \
+        > "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-aligned-bowtie1-beststratam1.bam"
+    samtools index "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-aligned-bowtie1-beststratam1.bam"
+
+    # Remove intermediate SAM file
+    rm -f "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-aligned-bowtie1-beststratam1.sam"
+
+    # Step 6: Generate Counts for Mature miRNAs
+    samtools idxstats "$OUTPUTDIR/$SAMPLE/${SAMPLE}-maturemiRNA-aligned-bowtie1-beststratam1.bam" \
+        | cut -f1,3 - \
+        | sed "1s/^/miRNA\t${SAMPLE}-miRNAcount\n/" \
+        > "$OUTPUTDIR/maturemiRNAcounts/${SAMPLE}-maturemiRNA-counts.txt"
+
+    echo "Sample ${SAMPLE} processed successfully."
+done
+
+echo "Pipeline completed!"
