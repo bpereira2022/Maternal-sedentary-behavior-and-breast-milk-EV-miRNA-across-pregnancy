@@ -169,7 +169,7 @@ bash "Raw Data Processing"
 - **Differential Expression**: DESeq2 with Wald test
 - **Multiple Testing Correction**: Benjamini-Hochberg (FDR)
 - **Significance Threshold**: Adjusted p-value < 0.10
-- **Correlation Analysis**: Pearson and Spearman with bootstrap confidence intervals (B=5000)
+- **Correlation Analysis**: Pearson and Spearman 
 - **Pathway Enrichment**: GO Biological Process with Bonferroni correction
 
 ## Results Interpretation
