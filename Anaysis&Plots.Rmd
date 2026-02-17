@@ -359,56 +359,39 @@ Volcano Plot
 # ---- Load Library ----
 library(EnhancedVolcano)
 
-# ---- Define Volcano Plot Function ----
-generate_volcano_plot <- function(results, 
-                                  title, 
-                                  subtitle, 
-                                  pval_cutoff = 0.10, 
-                                  fc_cutoff = 0.10, 
-                                  ylim_range = c(0, 4), 
-                                  xlim_range = c(-4, 6),
-                                  point_size = 1.0, 
-                                  label_size = 4.0, 
-                                  alpha = 0.5, 
-                                  max_overlaps = 80, 
-                                  legend_labels = c("NS", "Log2FC", "P-value", "P-value + Log2FC"),
-                                  legend_position = "right") {
-  # Remove NAs and convert results to a DataFrame
-  results_naomit <- na.omit(results)
-  res_df <- as.data.frame(results_naomit)
+EnhancedVolcano(
+  results,
+  lab = rownames(results),
+  x = "log2FoldChange",
+  y = "padj",
+
+  title = "Trimester Two Prolonged Sedentary Behavior",
+  subtitle = "Minutes/day in sedentary bouts ≥60 min, Q1 vs. Q3",
+
+  pCutoff = 0.054,
+  FCcutoff = 1.0,
+
+  pointSize = 1.0,
+  labSize = 4.0,
+  colAlpha = 0.5,
+
+  # IMPORTANT — tells it which to label
+  selectLab = rownames(results)[results$padj < 0.054],
+
+  # CONNECTORS
+  drawConnectors = TRUE,
+  widthConnectors = 0.5,
+  max.overlaps = 50,
+
+  legendPosition = "right",
+  legendLabels = c("NS", "Log2FC", "P-value", "P-value + Log2FC"),
+
+  col = c("gray", "blue", "green", "purple"),
   
-  # Extract significant candidates
-  sig_genes <- res_df %>%
-    filter(padj < pval_cutoff) %>%
-    rownames()
-  
-  # Ensure log2FoldChange and padj columns are properly formatted
-  res_df$log2FoldChange <- as.numeric(res_df$log2FoldChange)
-  res_df$padj <- as.numeric(res_df$padj)
-  
-  # Plot using EnhancedVolcano
-  EnhancedVolcano(
-    res_df,
-    lab = rownames(res_df),                     # Gene labels
-    x = "log2FoldChange",                       # X-axis: Log2 fold change
-    y = "padj",                                 # Y-axis: Adjusted p-value
-    title = title,                              # Main Title
-    subtitle = subtitle,                        # Subtitle
-    selectLab = sig_genes,                      # Genes to label
-    pCutoff = pval_cutoff,                      # P-value significance threshold
-    FCcutoff = fc_cutoff,                       # Fold-change significance threshold
-    pointSize = point_size,                     # Adjust point size
-    labSize = label_size,                       # Label size
-    colAlpha = alpha,                           # Point transparency
-    legendLabels = legend_labels,               # Legend labels
-    legendPosition = legend_position,           # Legend position
-    ylim = ylim_range,                          # Y-axis range
-    xlim = xlim_range,                          # X-axis range
-    drawConnectors = TRUE,                      # Draw lines to labels
-    col = c("gray", "blue", "green", "purple"), # Point colors: NS, Down, Up, Both
-    max.overlaps = max_overlaps                 # Maximum label overlaps
-  )
-}
+  # LIMITS
+  xlim = c(-6, 6),
+  ylim = c(0, 3.5)
+)
 ```
 
 Bubble Plot
