@@ -2,208 +2,124 @@
 
 ## Overview
 
-This repository contains the complete analysis pipeline for the research study: **"Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence for early-mid gestation sensitivity"** by Beatriz B. Elliott.
+This repository contains analysis code and data for:
+**"Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence for early-mid gestation sensitivity"**.
 
-This study investigates the relationship between maternal sedentary behavior and extracellular vesicle (EV) microRNA (miRNA) expression in breast milk across different pregnancy trimesters and postpartum. The analysis examines how prolonged sedentary bouts (≥60 minutes) and moderate-to-vigorous physical activity (MVPA) correlate with miRNA expression patterns.
+The project evaluates how sedentary behavior (sed60num) and moderate-to-vigorous physical activity (MVPA) relate to breast milk extracellular vesicle (EV) miRNA expression across pregnancy and postpartum.
 
 ## Repository Structure
 
 ```
 .
-├── Anaysis&Plots.Rmd          # Main R Markdown analysis file
-├── ColData.csv                # Sample metadata with activity measurements
-├── Merged_Count.csv           # miRNA count data matrix
-├── Pathway Analysis Files/    # Pathway enrichment analysis results
+├── Analysis_Plots_Updated.Rmd    # Main analysis and figure-generation workflow
+├── ColData.csv                   # Sample metadata and activity variables
+├── Merged_Count.csv              # miRNA count matrix
+├── Pathway Analysis Files/
 │   ├── T2_sednum60_pathways.csv
 │   └── background_gene_list_panther.txt
-├── Raw Data Processing        # Bash script for processing raw sequencing data
-└── README.md                  # This file
+├── Raw Data Processing           # Bash pipeline for raw small RNA-seq processing
+└── README.md
 ```
 
-## Study Design
+## Study Timepoints
 
-The study analyzes breast milk samples collected from pregnant participants across multiple time points:
-- **Trimester 1 (T1)**: Early pregnancy
-- **Trimester 2 (T2)**: Mid-pregnancy
-- **Trimester 3 (T3)**: Late pregnancy
-- **Postpartum (PP)**: After delivery
+- Trimester 1 (T1)
+- Trimester 2 (T2)
+- Trimester 3 (T3)
+- Postpartum (PP)
 
-### Activity Measurements
+## Main Analysis Workflow
 
-Two main physical activity metrics were assessed:
-1. **Sedentary Behavior (sed60num)**: Minutes per day spent in sedentary bouts ≥60 minutes
-2. **MVPA (mvpa)**: Minutes per day spent in moderate-to-vigorous physical activity
+`Analysis_Plots_Updated.Rmd` performs:
 
-Participants were categorized into quartiles:
-- **Low**: ≤ Q1 (quartile 1)
-- **Interquartile range**: Q1-Q3
-- **High**: ≥ Q3 (quartile 3)
+1. Data loading and alignment of sample IDs (`Merged_Count.csv`, `ColData.csv`)
+2. Low-count filtering and VST normalization (DESeq2)
+3. PCA and variance summaries
+4. Differential expression testing by sedentary-behavior and MVPA quartiles
+5. Figure generation (TIFF outputs)
+6. Export of DEG tables and auxiliary outputs
 
-## Data Files
+### Key generated outputs
 
-### ColData.csv
-Sample metadata file containing:
-- Participant IDs
-- MVPA measurements and quartile classifications for each time point
-- Sedentary behavior measurements (sed60num) and quartile classifications for each time point
+- `DIANA_background_miRNAs.txt`
+- `PCA_percent_variance.csv`
+- `PCA_sample_scores.csv`
+- `PCA_feature_loadings_topGenes.csv`
+- `results_activity_T1_DEGs_NAomit.csv`
+- `results_activity_T2_DEGs_NAomit.csv`
+- `results_activity_T3_DEGs_NAomit.csv`
+- `results_activity_PP_DEGs_NAomit.csv`
+- `results_mvpa_T1_DEGs_NAomit.csv`
+- `results_mvpa_T2_DEGs_NAomit.csv`
+- `results_mvpa_T3_DEGs_NAomit.csv`
+- `results_mvpa_PP_DEGs_NAomit.csv`
+- `Figure_5B.tiff`, `Figure_5C.tiff`, `Figure_5D.tiff`
+- `Figure_6_Maternal_Activity_ISEV.tiff`
+- `Figure_7A.tiff`, `Figure_7B.tiff`, `Figure_7C.tiff`
+- `Figure_8A.tiff`
 
-### Merged_Count.csv
-miRNA expression count matrix:
-- Rows: miRNA features (e.g., hsa-let-7a-5p, hsa-miR-21-5p)
-- Columns: Sample IDs
-- Values: Raw read counts for each miRNA
+## Raw Data Processing
 
-### Pathway Analysis Files
-- **T2_sednum60_pathways.csv**: GO Biological Process enrichment results for Trimester 2 sedentary behavior analysis
-- **background_gene_list_panther.txt**: Background gene list for pathway analysis
+`Raw Data Processing` is a bash script for small RNA-seq preprocessing:
 
-## Analysis Pipeline
+- FastQC quality control
+- Adapter trimming (bbduk.sh)
+- Length filtering (cutadapt; 18–30 nt)
+- Alignment to miRBase (bowtie)
+- BAM processing and indexing (samtools)
+- miRNA count extraction (`samtools idxstats`)
 
-The analysis consists of several key components:
-
-### 1. Raw Data Processing
-The `Raw Data Processing` script performs the following steps:
-- **Quality Control**: FastQC analysis of raw sequencing reads
-- **Adapter Trimming**: Using bbduk.sh to remove adapter sequences
-- **Length Filtering**: Cutadapt to select reads between 18-30 nucleotides
-- **Alignment**: Bowtie alignment to human miRBase reference
-- **Quantification**: Counting aligned reads per miRNA using samtools
-
-### 2. Quality Control & Normalization (`Anaysis&Plots.Rmd`)
-- Filtering low-count miRNAs (≥5 counts in ≥3 samples)
-- DESeq2 normalization
-- Library size distribution analysis
-- Variance Stabilizing Transformation (VST)
-
-### 3. Principal Component Analysis (PCA)
-- VST transformation of count data
-- Selection of top 500 variable genes
-- PCA calculation and visualization
-- Correlation analysis between PCs and activity metrics
-- Bootstrap confidence interval estimation
-
-### 4. Differential Expression Analysis
-Using DESeq2, the analysis compares:
-- **Sedentary Behavior**: Low vs. High sedentary time (Q1 vs. Q3)
-- **Active Behavior**: Low vs. High MVPA (Q1 vs. Q3)
-
-Analyses are performed separately for:
-- Trimester 1
-- Trimester 2
-- Trimester 3
-- Postpartum
-
-Differentially expressed miRNAs are identified using an adjusted p-value threshold of 0.10.
-
-### 5. Visualization
-- **Volcano Plots**: Display log2 fold change vs. adjusted p-value
-- **Bubble Plots**: Show enriched GO pathways with fold enrichment and significance
-- **PCA Plots**: Visualize sample clustering by activity quartiles
-- **Regression Plots**: Illustrate relationships between PCs and activity metrics
-
-## Key Findings
-
-The analysis generates several output files:
-- `results_activity_T1_DEGs_NAomit.csv`: DEGs for sedentary behavior in T1
-- `results_activity_T2_DEGs_NAomit.csv`: DEGs for sedentary behavior in T2
-- `results_activity_T3_DEGs_NAomit.csv`: DEGs for sedentary behavior in T3
-- `results_activity_PP_DEGs_NAomit.csv`: DEGs for sedentary behavior postpartum
-- `results_mvpa_T1_DEGs_NAomit.csv`: DEGs for MVPA in T1
-- `DIANA_background_miRNAs.txt`: List of miRNAs passing QC filters for pathway analysis
+> Update `INPUTDIR`, `OUTPUTDIR`, and `HUMANMIRBASEINDEX` in the script before running.
 
 ## Requirements
 
-### R Dependencies
-```r
-# Bioconductor packages
-BiocManager::install("DESeq2")
-BiocManager::install("vsn")
+### R/Bioconductor and CRAN packages
 
-# CRAN packages
-install.packages(c(
-  "pheatmap",
-  "RColorBrewer",
-  "ggplot2",
-  "tidyverse",
-  "dplyr",
-  "matrixStats",
-  "EnhancedVolcano",
-  "readr"
-))
-```
+- BiocManager
+- DESeq2
+- vsn
+- pheatmap
+- RColorBrewer
+- ggplot2
+- matrixStats
+- tidyverse
+- patchwork
+- EnhancedVolcano
+- readr
+- dplyr
+- ggrepel (used for PCA point labels)
 
-### Command-line Tools (for raw data processing)
+### Command-line tools (raw processing)
+
 - FastQC
-- bbduk.sh (from BBTools suite)
-- Cutadapt
-- Bowtie
-- Samtools
-- Human miRBase reference database
+- bbduk.sh (BBTools)
+- cutadapt
+- bowtie
+- samtools
 
 ## Usage
 
-### Running the Main Analysis
+### Run the R analysis
 
-1. Ensure all required R packages are installed
-2. Place data files (`ColData.csv` and `Merged_Count.csv`) in the working directory
-3. Open and run `Anaysis&Plots.Rmd` in RStudio or with:
+From repository root:
 
 ```r
-rmarkdown::render("Anaysis&Plots.Rmd")
+rmarkdown::render("Analysis_Plots_Updated.Rmd")
 ```
 
-### Processing Raw Sequencing Data
+### Run raw data processing
 
-1. Update the directory paths in the `Raw Data Processing` script:
-   - `INPUTDIR`: Directory containing raw FASTQ files
-   - `OUTPUTDIR`: Directory for processed output
-   - `HUMANMIRBASEINDEX`: Path to miRBase reference index
-
-2. Run the bash script:
 ```bash
 bash "Raw Data Processing"
 ```
 
-## Statistical Methods
-
-- **Differential Expression**: DESeq2 with Wald test
-- **Multiple Testing Correction**: Benjamini-Hochberg (FDR)
-- **Significance Threshold**: Adjusted p-value < 0.10
-- **Correlation Analysis**: Pearson and Spearman 
-- **Pathway Enrichment**: GO Biological Process with Bonferroni correction
-
-## Results Interpretation
-
-### Volcano Plots
-- X-axis: log2 fold change (effect size)
-- Y-axis: -log10(adjusted p-value) (significance)
-- Points colored by significance and fold change thresholds
-
-### Bubble Plots
-- Size: Fold enrichment of pathway
-- Color: -log10(Bonferroni p-value)
-- Y-axis: Enriched GO terms
-
-### PCA Plots
-- Convex hulls show grouping by activity quartiles
-- PC2 appears to be sensitive to sedentary behavior in Trimester 2
-
 ## Citation
 
-If you use this code or data, please cite:
+If you use this repository, please cite:
 
 *Elliott, B.B. (2026). Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence for early-mid gestation sensitivity.*
 
 ## Contact
 
-For questions or additional information, please contact:
-- **Author**: Beatriz B. Elliott
-- **Repository**: [github.com/bpereira2022/Maternal-sedentary-behavior-and-breast-milk-EV-miRNA-across-pregnancy](https://github.com/bpereira2022/Maternal-sedentary-behavior-and-breast-milk-EV-miRNA-across-pregnancy)
-
-## License
-
-Please contact the author regarding data usage and licensing.
-
----
-
-*Last updated: January 2026*
+- Author: Beatriz B. Elliott
+- Repository: <https://github.com/bpereira2022/Maternal-sedentary-behavior-and-breast-milk-EV-miRNA-across-pregnancy>
