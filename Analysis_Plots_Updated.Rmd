@@ -1,0 +1,480 @@
+---
+title: "Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence
+  for early-mid gestation sensitivity"
+author: "Beatriz B. Elliott"
+date: "2026-01-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ============================================================
+# PACKAGE INSTALLATION AND LOADING
+# ============================================================
+```{r packages}
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!requireNamespace("DESeq2",      quietly = TRUE)) BiocManager::install("DESeq2")
+if (!requireNamespace("vsn",         quietly = TRUE)) BiocManager::install("vsn")
+if (!requireNamespace("pheatmap",    quietly = TRUE)) install.packages("pheatmap")
+if (!requireNamespace("RColorBrewer",quietly = TRUE)) install.packages("RColorBrewer")
+if (!requireNamespace("ggplot2",     quietly = TRUE)) install.packages("ggplot2")
+if (!requireNamespace("matrixStats", quietly = TRUE)) install.packages("matrixStats")
+if (!requireNamespace("tidyverse",   quietly = TRUE)) install.packages("tidyverse")
+if (!requireNamespace("patchwork",   quietly = TRUE)) install.packages("patchwork")
+if (!requireNamespace("EnhancedVolcano", quietly = TRUE)) BiocManager::install("EnhancedVolcano")
+if (!requireNamespace("readr",       quietly = TRUE)) install.packages("readr")
+
+library(DESeq2)
+library(vsn)
+library(pheatmap)
+library(RColorBrewer)
+library(ggplot2)
+library(matrixStats)
+library(tidyverse)
+library(patchwork)
+library(EnhancedVolcano)
+library(readr)
+library(dplyr)
+```
+
+# ============================================================
+# LOAD DATA (shared across all chunks)
+# ============================================================
+```{r load_data}
+set.seed(123)
+
+counts  <- read.csv("Merged_Count.csv", row.names = 1, header = TRUE, check.names = FALSE)
+coldata <- read.csv("ColData.csv", row.names = 1)
+common  <- intersect(colnames(counts), rownames(coldata))
+counts  <- counts[, common, drop = FALSE]
+coldata <- coldata[common, , drop = FALSE]
+
+# DESeqDataSet — filtered
+dds0 <- DESeqDataSetFromMatrix(countData = counts, colData = coldata, design = ~ 1)
+dds0 <- dds0[rowSums(counts(dds0) >= 5) >= 3, ]
+
+# Save background miRNA list for DIANA
+miRNA_for_background <- rownames(dds0)
+write.table(miRNA_for_background, file = "DIANA_background_miRNAs.txt",
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# VST for PCA and expression plots
+vsd <- varianceStabilizingTransformation(dds0, blind = TRUE)
+mat <- assay(vsd)
+```
+
+# ============================================================
+# FIGURE 5 — QC, PCA, Top miRNAs
+# Note: Panels A–D generated individually; combined and lettered in PowerPoint
+# ============================================================
+
+## Figure 5A — RNA Concentration (Qubit)
+```{r fig5A}
+# Requires a CSV with columns: Sample_ID, RNA_Concentration_ng_uL
+# Update filename to match your actual Qubit output file
+rna_conc <- read.csv("RNA_Concentration.csv")
+
+fig5A <- ggplot(rna_conc, aes(x = Sample_ID, y = RNA_Concentration_ng_uL)) +
+  geom_col(fill = "#2C6EA6", width = 0.7) +
+  labs(
+    title = NULL,
+    x     = "Sample ID",
+    y     = "RNA Concentration (Qubit) (ng/µL)"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y  = element_text(size = 11),
+    axis.title   = element_text(size = 13)
+  )
+
+ggsave("Figure_5A.tiff", plot = fig5A,
+       width = 7, height = 5, dpi = 300, compression = "lzw")
+```
+
+## Figure 5B — Raw vs Normalized Library Sizes
+```{r fig5B}
+dds_sf <- estimateSizeFactors(dds0)
+
+lib_df <- bind_rows(
+  tibble(Sample = colnames(dds0),
+         Counts = colSums(counts(dds_sf, normalized = FALSE)),
+         Type   = "Raw"),
+  tibble(Sample = colnames(dds0),
+         Counts = colSums(counts(dds_sf, normalized = TRUE)),
+         Type   = "Normalized")
+)
+
+fig5B <- ggplot(lib_df, aes(x = Sample, y = Counts, fill = Type)) +
+  geom_col(position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("Raw" = "#7EC8E3", "Normalized" = "#90EE90"),
+                    name = NULL) +
+  scale_y_continuous(labels = scales::scientific) +
+  labs(x = "Sample ID", y = "Total counts") +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y  = element_text(size = 11),
+    axis.title   = element_text(size = 13),
+    legend.text  = element_text(size = 12),
+    legend.position = "top"
+  )
+
+ggsave("Figure_5B.tiff", plot = fig5B,
+       width = 7, height = 5, dpi = 300, compression = "lzw")
+```
+
+## Figure 5C — PCA Plot (PC1 vs PC2, labeled by Sample ID)
+```{r fig5C}
+rv        <- rowVars(mat)
+top_genes <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
+pc        <- prcomp(t(mat[top_genes, ]), center = TRUE, scale. = TRUE)
+percentVar <- 100 * (pc$sdev^2) / sum(pc$sdev^2)
+
+scores <- as.data.frame(pc$x) %>%
+  rownames_to_column("Sample") %>%
+  left_join(rownames_to_column(as.data.frame(coldata), var = "Sample"), by = "Sample")
+
+# Save outputs
+write.csv(tibble(PC = paste0("PC", seq_along(percentVar)),
+                 PercentVariance = percentVar),
+          "PCA_percent_variance.csv", row.names = FALSE)
+write.csv(scores, "PCA_sample_scores.csv", row.names = FALSE)
+write.csv(as.data.frame(pc$rotation) %>% rownames_to_column("Feature"),
+          "PCA_feature_loadings_topGenes.csv", row.names = FALSE)
+
+fig5C <- ggplot(scores, aes(x = PC1, y = PC2, color = Sample, label = Sample)) +
+  geom_point(size = 3) +
+  ggrepel::geom_text_repel(size = 3.5, show.legend = FALSE) +
+  labs(
+    x = paste0("PC1 (", round(percentVar[1], 1), "% variance)"),
+    y = paste0("PC2 (", round(percentVar[2], 1), "% variance)")
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size = 11),
+    axis.title = element_text(size = 13)
+  )
+
+# Install ggrepel if needed: install.packages("ggrepel")
+ggsave("Figure_5C.tiff", plot = fig5C,
+       width = 6, height = 5, dpi = 300, compression = "lzw")
+
+# ---- Compile full PCA results dataframe ----
+pca_results <- scores %>%
+  dplyr::select(Sample, PC1, PC2, PC3, PC4) %>%
+  left_join(
+    tibble(
+      PC            = paste0("PC", 1:4),
+      PercentVar    = round(percentVar[1:4], 2)
+    ) %>%
+      pivot_wider(names_from = PC, values_from = PercentVar) %>%
+      rename_with(~ paste0(., "_pct_variance")),
+    by = character()
+  ) %>%
+  bind_cols(
+    as.data.frame(coldata)[scores$Sample, ] %>%
+      dplyr::select(
+        sed60num_trimester1, sed60num_trimester2,
+        sed60num_trimester3, sed60num_postpartum,
+        sed60num_quartile_trimester1, sed60num_quartile_trimester2,
+        sed60num_quartile_trimester3, sed60num_quartile_postpartum,
+        mvpa_quartile_trimester1, mvpa_quartile_trimester2,
+        mvpa_quartile_trimester3, mvpa_quartile_postpartum
+      )
+  )
+
+write.csv(pca_results, "PCA_full_results.csv", row.names = FALSE)
+```
+
+## Figure 5D — Top 20 Most Expressed miRNAs (Mean VST-normalized expression)
+```{r fig5D}
+mean_expr <- rowMeans(mat)
+top20     <- sort(mean_expr, decreasing = TRUE)[1:20]
+top20_df  <- tibble(
+  miRNA      = factor(names(top20), levels = rev(names(top20))),
+  Expression = top20
+)
+
+fig5D <- ggplot(top20_df, aes(x = Expression, y = miRNA)) +
+  geom_col(fill = "#F4A0A0", width = 0.7) +
+  labs(
+    x = "Mean VST-normalized expression",
+    y = NULL
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.y  = element_text(size = 10, face = "italic"),
+    axis.text.x  = element_text(size = 11),
+    axis.title.x = element_text(size = 13)
+  )
+
+ggsave("Figure_5D.tiff", plot = fig5D,
+       width = 7, height = 6, dpi = 300, compression = "lzw")
+```
+
+# ============================================================
+# FIGURE 6 — Regression Analysis: PC2 vs SED60+ (4-panel)
+# Generated fully in R using patchwork
+# ============================================================
+```{r fig6}
+# ---- Helper: correlation annotation ----
+make_label <- function(x, y) {
+  complete_idx <- complete.cases(x, y)
+  x <- x[complete_idx]; y <- y[complete_idx]
+  p  <- cor.test(x, y, method = "pearson")
+  sp <- cor.test(x, y, method = "spearman", exact = FALSE)
+  sprintf(
+    "r = %.3f , p-value = %.3f\n\u03c1 = %.3f , p-value = %.3f",
+    p$estimate, p$p.value,
+    sp$estimate, sp$p.value
+  )
+}
+
+# ---- Helper: single panel ----
+make_panel <- function(x_var, y_var, quartile_var, title, panel_label) {
+  df <- data.frame(x = x_var, y = y_var, Quartile = quartile_var) %>%
+    filter(!is.na(x) & !is.na(y) & !is.na(Quartile))
+
+  df$Quartile <- factor(df$Quartile,
+    levels = c(
+      unique(df$Quartile[grepl("Lower",   df$Quartile, ignore.case = TRUE)]),
+      unique(df$Quartile[grepl("Inter",   df$Quartile, ignore.case = TRUE)]),
+      unique(df$Quartile[grepl("Greater", df$Quartile, ignore.case = TRUE)])
+    )
+  )
+
+  ggplot(df, aes(x = x, y = y, color = Quartile)) +
+    geom_smooth(method = "lm", color = "black", se = TRUE,
+                fill = "grey80", linewidth = 0.9) +
+    geom_point(size = 3) +
+    annotate("label", x = Inf, y = -Inf,
+             label = make_label(df$x, df$y),
+             hjust = 1.05, vjust = -0.2,
+             size = 4.0, label.size = 0.4, family = "sans") +
+    scale_color_manual(
+      name   = NULL,
+      values = c("red", "darkgreen", "royalblue"),
+      labels = c("Q1", "Interquartile Range", "Q3")
+    ) +
+    labs(
+      title = title,
+      x     = "Average minutes/day in sedentary bouts greater than or equal to 60 minutes",
+      y     = "PC2"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      plot.title   = element_text(size = 13, hjust = 0.5),
+      axis.title.x = element_text(size = 11),
+      axis.title.y = element_text(size = 13),
+      axis.text    = element_text(size = 11),
+      legend.text  = element_text(size = 12),
+      plot.tag     = element_text(face = "bold", size = 15)
+    ) +
+    labs(tag = panel_label)
+}
+
+# Attach sedentary data to scores
+plot_df <- scores %>%
+  mutate(
+    T1_sed = coldata$sed60num_trimester1,
+    T2_sed = coldata$sed60num_trimester2,
+    T3_sed = coldata$sed60num_trimester3,
+    PP_sed = coldata$sed60num_postpartum,
+    T1_qrt = coldata$sed60num_quartile_trimester1,
+    T2_qrt = coldata$sed60num_quartile_trimester2,
+    T3_qrt = coldata$sed60num_quartile_trimester3,
+    PP_qrt = coldata$sed60num_quartile_postpartum
+  )
+
+pA <- make_panel(plot_df$T1_sed, plot_df$PC2, plot_df$T1_qrt,
+  "Regression Analysis PC2: Trimester One Prolonged\nSedentary Behavior", "A")
+pB <- make_panel(plot_df$T2_sed, plot_df$PC2, plot_df$T2_qrt,
+  "Regression Analysis PC2: Trimester Two Prolonged\nSedentary Behavior", "B")
+pC <- make_panel(plot_df$T3_sed, plot_df$PC2, plot_df$T3_qrt,
+  "Regression Analysis PC2: Trimester Three Prolonged\nSedentary Behavior", "C")
+pD <- make_panel(plot_df$PP_sed, plot_df$PC2, plot_df$PP_qrt,
+  "Regression Analysis PC2: Postpartum Prolonged Sedentary Behavior", "D")
+
+fig6 <- (pA + pB + pC + pD) +
+  plot_layout(ncol = 2, guides = "collect") &
+  theme(legend.position = "top")
+
+ggsave("Figure_6_Maternal_Activity_ISEV.tiff", plot = fig6,
+       width = 12, height = 10, dpi = 300, compression = "lzw")
+```
+
+# ============================================================
+# miRNA DIFFERENTIAL EXPRESSION — DESeq2
+# Sedentary behavior (SED60+) and MVPA, all timepoints
+# ============================================================
+```{r deseq2}
+run_deseq <- function(coldata, counts, group_col, ref_level, contrast_levels,
+                      output_file) {
+  coldata_filt <- coldata %>%
+    dplyr::select(all_of(group_col)) %>%
+    filter(.data[[group_col]] != "Interquartile range") %>%
+    mutate(Group = ifelse(grepl("Lower", .data[[group_col]]), "Low", "High")) %>%
+    dplyr::select(Group)
+
+  coldata_filt$Group <- factor(coldata_filt$Group, levels = c("Low", "High"))
+  counts_filt        <- counts[, rownames(coldata_filt)]
+
+  dds <- DESeqDataSetFromMatrix(countData = counts_filt,
+                                colData   = coldata_filt,
+                                design    = ~ Group)
+  dds <- estimateSizeFactors(dds)
+  dds <- dds[rowSums(counts(dds, normalized = TRUE) >= 5) >= 3, ]
+  dds$Group <- relevel(dds$Group, ref = ref_level)
+  dds <- DESeq(dds)
+
+  res <- results(dds, contrast = contrast_levels)
+  degs <- na.omit(res[which(res$padj < 0.10), ])
+  write.csv(as.data.frame(degs), output_file)
+  return(res)
+}
+
+# ---- Sedentary behavior (SED60+) ----
+results_activity_T1 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester1", "High", c("Group", "Low", "High"),
+  "results_activity_T1_DEGs_NAomit.csv")
+
+results_activity_T2 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester2", "High", c("Group", "Low", "High"),
+  "results_activity_T2_DEGs_NAomit.csv")
+
+results_activity_T3 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester3", "High", c("Group", "Low", "High"),
+  "results_activity_T3_DEGs_NAomit.csv")
+
+results_activity_PP <- run_deseq(coldata, counts,
+  "sed60num_quartile_postpartum", "High", c("Group", "Low", "High"),
+  "results_activity_PP_DEGs_NAomit.csv")
+
+# ---- MVPA ----
+results_mvpa_T1 <- run_deseq(coldata, counts,
+  "mvpa_quartile_trimester1", "Low", c("Group", "High", "Low"),
+  "results_mvpa_T1_DEGs_NAomit.csv")
+
+results_mvpa_T2 <- run_deseq(coldata, counts,
+  "mvpa_quartile_trimester2", "Low", c("Group", "High", "Low"),
+  "results_mvpa_T2_DEGs_NAomit.csv")
+
+results_mvpa_T3 <- run_deseq(coldata, counts,
+  "mvpa_quartile_trimester3", "Low", c("Group", "High", "Low"),
+  "results_mvpa_T3_DEGs_NAomit.csv")
+
+results_mvpa_PP <- run_deseq(coldata, counts,
+  "mvpa_quartile_postpartum", "Low", c("Group", "High", "Low"),
+  "results_mvpa_PP_DEGs_NAomit.csv")
+```
+
+# ============================================================
+# FIGURE 7 — Volcano Plots: SED60+ T1, T2, T3
+# Note: Panels A–C generated individually; combined and lettered in PowerPoint
+# ============================================================
+```{r fig7}
+make_volcano <- function(results_obj, title, subtitle, n_total, output_file) {
+  df <- as.data.frame(results_obj)
+
+  p <- EnhancedVolcano(
+    df,
+    lab          = rownames(df),
+    x            = "log2FoldChange",
+    y            = "padj",
+    title        = title,
+    subtitle     = subtitle,
+    titleLabSize    = 16,
+    subtitleLabSize = 13,
+    pCutoff      = 0.054,
+    FCcutoff     = 1.0,
+    pointSize    = 2.0,
+    labSize      = 5.0,
+    colAlpha     = 0.6,
+    selectLab    = rownames(df)[!is.na(df$padj) & df$padj < 0.054],
+    drawConnectors  = TRUE,
+    widthConnectors = 0.5,
+    max.overlaps    = 50,
+    legendPosition  = "right",
+    legendLabels    = c("NS", "Log2FC", "P-value", "P-value + Log2FC"),
+    col          = c("grey60", "#0072B2", "#CC79A7", "#009E73"),
+    xlim         = c(-6, 6),
+    ylim         = c(0, 3.5),
+    caption      = paste0("total = ", n_total, " variables")
+  ) +
+    theme(
+      axis.text  = element_text(size = 11),
+      axis.title = element_text(size = 13)
+    )
+
+  ggsave(output_file, plot = p,
+         width = 10, height = 8, dpi = 300, compression = "lzw")
+  return(p)
+}
+
+# Count total variables per timepoint (non-NA padj)
+n_T1 <- sum(!is.na(as.data.frame(results_activity_T1)$padj))
+n_T2 <- sum(!is.na(as.data.frame(results_activity_T2)$padj))
+n_T3 <- sum(!is.na(as.data.frame(results_activity_T3)$padj))
+
+fig7A <- make_volcano(results_activity_T1,
+  title    = "Trimester One Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  n_total  = n_T1,
+  output_file = "Figure_7A.tiff")
+
+fig7B <- make_volcano(results_activity_T2,
+  title    = "Trimester Two Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  n_total  = n_T2,
+  output_file = "Figure_7B.tiff")
+
+fig7C <- make_volcano(results_activity_T3,
+  title    = "Trimester Three Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  n_total  = n_T3,
+  output_file = "Figure_7C.tiff")
+```
+
+# ============================================================
+# FIGURE 8A — Bubble Plot: Top Enriched Pathways in Trimester Two
+# Note: 8B (umbrella category table) added in PowerPoint
+# ============================================================
+```{r fig8A}
+bubble_data <- read_csv("T2_sednum60_pathways.csv")
+
+bubble_data$`GO Biological Process Complete Term` <- factor(
+  bubble_data$`GO Biological Process Complete Term`,
+  levels = rev(unique(bubble_data %>%
+    arrange(Bonferroni) %>%
+    pull(`GO Biological Process Complete Term`)))
+)
+
+fig8A <- ggplot(bubble_data,
+    aes(x = "Targets of upregulated miRNAs of:",
+        y = `GO Biological Process Complete Term`)) +
+  geom_point(aes(size = `Fold Enrichment`, color = -log10(Bonferroni))) +
+  scale_color_viridis_c(option = "viridis", name = "-log10(Bonferroni)") +
+  scale_size_continuous(name = "Fold Enrichment") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Top Enriched Pathways in Trimester Two",
+    x     = "minutes/day in bouts \u226560 min in sedentary bouts",
+    y     = "Enriched GO Term"
+  ) +
+  theme(
+    plot.title      = element_text(size = 15, hjust = 0.5),
+    axis.title.x    = element_text(size = 13),
+    axis.title.y    = element_text(size = 13),
+    axis.text.y     = element_text(size = 11),
+    axis.text.x     = element_text(size = 11),
+    legend.title    = element_text(size = 12),
+    legend.text     = element_text(size = 11)
+  )
+
+ggsave("Figure_8A.tiff", plot = fig8A,
+       width = 12, height = 10, dpi = 300, compression = "lzw")
+```
