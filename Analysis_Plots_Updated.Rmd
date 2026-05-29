@@ -40,7 +40,7 @@ library(dplyr)
 ```
 
 # ============================================================
-# LOAD DATA (shared across all chunks)
+# LOAD DATA 
 # ============================================================
 ```{r load_data}
 set.seed(123)
@@ -67,32 +67,8 @@ mat <- assay(vsd)
 
 # ============================================================
 # FIGURE 5 — QC, PCA, Top miRNAs
-# Note: Panels A–D generated individually; combined and lettered in PowerPoint
+# Note: Panels B–D generated individually; combined and lettered in PowerPoint. Panel A was made in Excel (qubit concentrations of the samples). 
 # ============================================================
-
-## Figure 5A — RNA Concentration (Qubit)
-```{r fig5A}
-# Requires a CSV with columns: Sample_ID, RNA_Concentration_ng_uL
-# Update filename to match your actual Qubit output file
-rna_conc <- read.csv("RNA_Concentration.csv")
-
-fig5A <- ggplot(rna_conc, aes(x = Sample_ID, y = RNA_Concentration_ng_uL)) +
-  geom_col(fill = "#2C6EA6", width = 0.7) +
-  labs(
-    title = NULL,
-    x     = "Sample ID",
-    y     = "RNA Concentration (Qubit) (ng/µL)"
-  ) +
-  theme_classic(base_size = 14) +
-  theme(
-    axis.text.x  = element_text(angle = 45, hjust = 1, size = 11),
-    axis.text.y  = element_text(size = 11),
-    axis.title   = element_text(size = 13)
-  )
-
-ggsave("Figure_5A.tiff", plot = fig5A,
-       width = 7, height = 5, dpi = 300, compression = "lzw")
-```
 
 ## Figure 5B — Raw vs Normalized Library Sizes
 ```{r fig5B}
@@ -162,32 +138,6 @@ fig5C <- ggplot(scores, aes(x = PC1, y = PC2, color = Sample, label = Sample)) +
 # Install ggrepel if needed: install.packages("ggrepel")
 ggsave("Figure_5C.tiff", plot = fig5C,
        width = 6, height = 5, dpi = 300, compression = "lzw")
-
-# ---- Compile full PCA results dataframe ----
-pca_results <- scores %>%
-  dplyr::select(Sample, PC1, PC2, PC3, PC4) %>%
-  left_join(
-    tibble(
-      PC            = paste0("PC", 1:4),
-      PercentVar    = round(percentVar[1:4], 2)
-    ) %>%
-      pivot_wider(names_from = PC, values_from = PercentVar) %>%
-      rename_with(~ paste0(., "_pct_variance")),
-    by = character()
-  ) %>%
-  bind_cols(
-    as.data.frame(coldata)[scores$Sample, ] %>%
-      dplyr::select(
-        sed60num_trimester1, sed60num_trimester2,
-        sed60num_trimester3, sed60num_postpartum,
-        sed60num_quartile_trimester1, sed60num_quartile_trimester2,
-        sed60num_quartile_trimester3, sed60num_quartile_postpartum,
-        mvpa_quartile_trimester1, mvpa_quartile_trimester2,
-        mvpa_quartile_trimester3, mvpa_quartile_postpartum
-      )
-  )
-
-write.csv(pca_results, "PCA_full_results.csv", row.names = FALSE)
 ```
 
 ## Figure 5D — Top 20 Most Expressed miRNAs (Mean VST-normalized expression)
