@@ -1,125 +1,110 @@
-# Maternal Sedentary Behavior and Breast Milk EV miRNA Across Pregnancy
+# Maternal Sedentary Behavior and Breast Milk EV miRNA Across Pregnancy: Evidence for Early-Mid Gestation Sensitivity
 
-## Overview
+**Author:** Beatriz B. Elliott  
+**Last updated:** 2026-01-21
 
-This repository contains analysis code and data for:
-**"Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence for early-mid gestation sensitivity"**.
+---
 
-The project evaluates how sedentary behavior (sed60num) and moderate-to-vigorous physical activity (MVPA) relate to breast milk extracellular vesicle (EV) miRNA expression across pregnancy and postpartum.
+## Project Overview
 
-## Repository Structure
+This project investigates the relationship between maternal physical activity patterns — specifically prolonged sedentary behavior (SED60+) and moderate-to-vigorous physical activity (MVPA) — and small extracellular vesicle (EV) miRNA profiles in breast milk across pregnancy and the postpartum period. miRNA sequencing was performed on 11 breast milk samples and analyzed for differential expression and principal component associations with activity measures collected across four timepoints: Trimester 1, Trimester 2, Trimester 3, and Postnatal.
 
-```
-.
-├── Analysis_Plots_Updated.Rmd    # Main analysis and figure-generation workflow
-├── ColData.csv                   # Sample metadata and activity variables
-├── Merged_Count.csv              # miRNA count matrix
-├── Pathway Analysis Files/
-│   ├── T2_sednum60_pathways.csv
-│   └── background_gene_list_panther.txt
-├── Raw Data Processing           # Bash pipeline for raw small RNA-seq processing
-└── README.md
-```
+---
 
-## Study Timepoints
+## Repository Contents
 
-- Trimester 1 (T1)
-- Trimester 2 (T2)
-- Trimester 3 (T3)
-- Postpartum (PP)
+| File | Description |
+|------|-------------|
+| `Raw_Data_Processing.txt` | Bash pipeline for raw FASTQ processing through to mature miRNA counts |
+| `Merged_Count.csv` | Raw miRNA count matrix (2,655 miRNAs × 11 samples) |
+| `ColData.csv` | Sample metadata including MVPA and SED60+ values and quartile classifications across all four timepoints |
+| `Analysis_Plots_NOU_Activity.Rmd` | R Markdown file containing all QC, PCA, correlation, DESeq2, and figure generation code |
+| `DIANA_background_miRNAs.txt` | Background miRNA list for pathway enrichment (generated on run) |
+| `T2_sednum60_pathways.csv` | GO pathway enrichment results for Trimester 2 SED60+ upregulated miRNA targets (input for Figure 8A) |
 
-## Main Analysis Workflow
+---
 
-`Analysis_Plots_Updated.Rmd` performs:
+## Raw Data Processing Pipeline (`Raw_Data_Processing.txt`)
 
-1. Data loading and alignment of sample IDs (`Merged_Count.csv`, `ColData.csv`)
-2. Low-count filtering and VST normalization (DESeq2)
-3. PCA and variance summaries
-4. Differential expression testing by sedentary-behavior and MVPA quartiles
-5. Figure generation (TIFF outputs)
-6. Export of DEG tables and auxiliary outputs
+Run in bash. Requires: `fastqc`, `bbduk.sh`, `cutadapt`, `bowtie`, `samtools`, and a human miRBase Bowtie index.
 
-### Key generated outputs
+**Steps per sample:**
 
-- `DIANA_background_miRNAs.txt`
-- `PCA_percent_variance.csv`
-- `PCA_sample_scores.csv`
-- `PCA_feature_loadings_topGenes.csv`
-- `results_activity_T1_DEGs_NAomit.csv`
-- `results_activity_T2_DEGs_NAomit.csv`
-- `results_activity_T3_DEGs_NAomit.csv`
-- `results_activity_PP_DEGs_NAomit.csv`
-- `results_mvpa_T1_DEGs_NAomit.csv`
-- `results_mvpa_T2_DEGs_NAomit.csv`
-- `results_mvpa_T3_DEGs_NAomit.csv`
-- `results_mvpa_PP_DEGs_NAomit.csv`
-- `Figure_5B.tiff`, `Figure_5C.tiff`, `Figure_5D.tiff`
-- `Figure_6_Maternal_Activity_ISEV.tiff`
-- `Figure_7A.tiff`, `Figure_7B.tiff`, `Figure_7C.tiff`
-- `Figure_8A.tiff`
+1. **FastQC** — quality control on raw FASTQ files
+2. **bbduk.sh** — adapter trimming (Illumina TruSeq small RNA adapter)
+3. **Cutadapt** — read length filtering (18–30 bp)
+4. **Bowtie** — alignment to human mature miRNA sequences from miRBase (`-n 0 -l 32 --norc --best --strata -m 1`; unique alignments only)
+5. **samtools** — SAM → BAM conversion, sorting, and indexing
+6. **samtools idxstats** — per-miRNA read count extraction
 
-## Raw Data Processing
+Output per sample: a count file in `$OUTPUTDIR/maturemiRNAcounts/`. These are merged across samples to produce `Merged_Count.csv`.
 
-`Raw Data Processing` is a bash script for small RNA-seq preprocessing:
-
-- FastQC quality control
-- Adapter trimming (bbduk.sh)
-- Length filtering (cutadapt; 18–30 nt)
-- Alignment to miRBase (bowtie)
-- BAM processing and indexing (samtools)
-- miRNA count extraction (`samtools idxstats`)
-
-> Update `INPUTDIR`, `OUTPUTDIR`, and `HUMANMIRBASEINDEX` in the script before running.
-
-## Requirements
-
-### R/Bioconductor and CRAN packages
-
-- BiocManager
-- DESeq2
-- vsn
-- pheatmap
-- RColorBrewer
-- ggplot2
-- matrixStats
-- tidyverse
-- patchwork
-- EnhancedVolcano
-- readr
-- dplyr
-- ggrepel (used for PCA point labels)
-
-### Command-line tools (raw processing)
-
-- FastQC
-- bbduk.sh (BBTools)
-- cutadapt
-- bowtie
-- samtools
-
-## Usage
-
-### Run the R analysis
-
-From repository root:
-
-```r
-rmarkdown::render("Analysis_Plots_Updated.Rmd")
-```
-
-### Run raw data processing
-
+**Before running**, update the following paths at the top of the script:
 ```bash
-bash "Raw Data Processing"
+INPUTDIR="/path/to/your/fastq/files"
+OUTPUTDIR="/path/to/your/output/directory"
+HUMANMIRBASEINDEX="/path/to/miRBase/bowtie/index"
 ```
 
-## Citation
+---
 
-If you use this repository, please cite:
+## R Analysis (`Analysis_Plots_NOU_Activity.Rmd`)
 
-*Elliott, B.B. (2026). Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence for early-mid gestation sensitivity.*
+#### `load_data`
+- Reads `Merged_Count.csv` and `ColData.csv`
+- Aligns samples between count matrix and metadata
+- Builds a `DESeqDataSet` and filters low-count miRNAs (≥5 counts in ≥3 samples)
+- Saves background miRNA list to `DIANA_background_miRNAs.txt`
+- Applies variance stabilizing transformation (VST, blind) → `count_mat`
+- Defines shared `jn_theme` for ggplot figures
 
-## Contact
+#### Figure 5A — Qubit RNA Concentrations
+Bar plot of RNA concentrations (ng/µL) per sample as measured by Qubit. Saved as `Figure_4A.tiff`.
 
-- Author: Beatriz B. Elliott
-- Repository: <https://github.com/bpereira2022/Maternal-sedentary-behavior-and-breast-milk-EV-miRNA-across-pregnancy>
+#### Figure 5B — Raw vs. Normalized Library Sizes
+Side-by-side barplot comparing raw and DESeq2 size-factor-normalized total counts per sample. Saved as `Figure_4B.tiff`.
+
+#### Figure 5C — PCA Plot
+PCA on VST-normalized counts across all miRNAs. Samples labeled by ID. Saved as `Figure_4C.tiff`.
+
+#### Figure 5D — Top 20 Most Expressed miRNAs
+Horizontal bar plot of the 20 miRNAs with the highest mean VST-normalized expression across all samples. Saved as `Figure_4D.tiff`.
+
+#### `fig6` — Correlation Analysis + Regression Plots
+
+**Correlation analysis** (printed to console, not saved as a figure):
+- PCA is re-run using the **top 500 most variable miRNAs** (`rowVars`), with `scale. = TRUE`
+- Pearson and Spearman correlations with bootstrapped 95% CIs (B = 5,000) are computed for PC1 and PC2 against each activity predictor across all four timepoints:
+  - SED60+: `sed60num_trimester1/2/3/postpartum`
+  - MVPA: `mvpa30num_trimester1/2/3/postpartum`
+- To change the predictor being examined, update the `predictor` variable
+
+**Regression plots:**
+- 4-panel figure: PC2 vs. SED60+ minutes/day, one panel per timepoint, colored by quartile (Q1 = red, IQR = green, Q3 = blue), with inline Pearson and Spearman annotation
+- Saved as `Figure_6_SED60_Maternal_Activity_ISEV.tiff`
+- A matching 4-panel MVPA figure is saved as `Figure_6_MVPA30_Maternal_Activity_ISEV.tiff`
+
+#### `deseq2` — Differential Expression
+DESeq2 analysis comparing low (Q1) vs. high (Q3) groups, excluding the interquartile range, for:
+- SED60+ at T1, T2, T3, Postpartum → `results_activity_T1/T2/T3/PP_DEGs_NAomit.csv`
+
+DEGs are defined as padj < 0.10. Results objects are retained in the environment for volcano plots.
+
+#### `fig7` — Volcano Plots
+EnhancedVolcano plots for SED60+ DESeq2 results at T1, T2, and T3. Thresholds: padj < 0.054, |log2FC| > 1. Colorblind-friendly palette. Saved individually as `Figure_7A/B/C.tiff` for assembly in PowerPoint.
+
+#### `fig8A` — Bubble Plot
+GO Biological Process enrichment bubble plot for targets of upregulated miRNAs in the Trimester 2 SED60+ comparison. Requires `T2_sednum60_pathways.csv`. Bubble size = fold enrichment; color = −log10(Bonferroni). Saved as `Figure_8A.tiff`.
+
+---
+
+## Activity Variables
+
+| Variable | Description |
+|----------|-------------|
+| `sed60num_trimester1/2/3/postpartum` | Average minutes/day in sedentary bouts ≥60 min at each timepoint |
+| `sed60num_quartile_trimester1/2/3/postpartum` | Quartile classification for SED60+ ("Lower than or equal to X", "Interquartile range", "Greater than or equal to X") |
+| `mvpa30num_trimester1/2/3/postpartum` | Average minutes/day in MVPA bouts ≥30 min at each timepoint |
+| `mvpa_quartile_trimester1/2/3/postpartum` | Quartile classification for MVPA |
+
+---
