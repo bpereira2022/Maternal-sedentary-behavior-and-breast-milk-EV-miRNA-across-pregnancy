@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-This project investigates the relationship between maternal physical activity patterns — specifically prolonged sedentary behavior (SED60+) and moderate-to-vigorous physical activity (MVPA) — and small extracellular vesicle (EV) miRNA profiles in breast milk across pregnancy and the postpartum period. miRNA sequencing was performed on 11 breast milk samples and analyzed for differential expression and principal component associations with activity measures collected across four timepoints: Trimester 1, Trimester 2, Trimester 3, and Postnatal.
+This project investigates the relationship between maternal physical activity patterns, specifically prolonged sedentary behavior (SED60+) and moderate-to-vigorous physical activity (MVPA), and small extracellular vesicle (EV) miRNA profiles in breast milk across pregnancy and the postpartum period. miRNA sequencing was performed on 11 breast milk samples and analyzed for differential expression and principal component associations with activity measures collected across four timepoints: Trimester 1, Trimester 2, Trimester 3, and Postnatal.
 
 ---
 
