@@ -17,10 +17,11 @@ This project investigates the relationship between maternal physical activity pa
 |------|-------------|
 | `Raw_Data_Processing.txt` | Bash pipeline for raw FASTQ processing through to mature miRNA counts |
 | `Merged_Count.csv` | Raw miRNA count matrix (2,655 miRNAs × 11 samples) |
-| `ColData.csv` | Sample metadata including MVPA and SED60+ values and quartile classifications across all four timepoints |
-| `Analysis_Plots_NOU_Activity.Rmd` | R Markdown file containing all QC, PCA, correlation, DESeq2, and figure generation code |
+| `ColData.csv` | Sample metadata including MVPA and SED60+ values; quartile columns are schema placeholders and are recomputed in the updated analysis document |
+| `Analysis_Plots_NOU_Activity.Rmd` | Original R Markdown analysis file |
+| `Analysis_Plots_NOU_Activity_updated.Rmd` | Organized and reproducible R Markdown for QC, PCA, correlation, DESeq2, and figure generation |
 | `DIANA_background_miRNAs.txt` | Background miRNA list for pathway enrichment (generated on run) |
-| `T2_sednum60_pathways.csv` | GO pathway enrichment results for Trimester 2 SED60+ upregulated miRNA targets (input for Figure 8A) |
+| `Pathway Analysis Files/T2_sednum60_pathways.csv` | GO pathway enrichment results for Trimester 2 SED60+ upregulated miRNA targets (input for Figure 8A) |
 
 ---
 
@@ -48,11 +49,12 @@ HUMANMIRBASEINDEX="/path/to/miRBase/bowtie/index"
 
 ---
 
-## R Analysis (`Analysis_Plots_NOU_Activity.Rmd`)
+## R Analysis (`Analysis_Plots_NOU_Activity_updated.Rmd`)
 
 #### `load_data`
 - Reads `Merged_Count.csv` and `ColData.csv`
 - Aligns samples between count matrix and metadata
+- Recomputes all quartile labels from continuous activity variables (MVPA and SED60+) to avoid dependence on prefilled quartile assignments in `ColData.csv`
 - Builds a `DESeqDataSet` and filters low-count miRNAs (≥5 counts in ≥3 samples)
 - Saves background miRNA list to `DIANA_background_miRNAs.txt`
 - Applies variance stabilizing transformation (VST, blind) → `count_mat`
@@ -108,3 +110,11 @@ GO Biological Process enrichment bubble plot for targets of upregulated miRNAs i
 | `mvpa_quartile_trimester1/2/3/postpartum` | Quartile classification for MVPA |
 
 ---
+
+## Running the updated analysis
+
+From the repository root, render the organized analysis document:
+
+```r
+rmarkdown::render("Analysis_Plots_NOU_Activity_updated.Rmd")
+```

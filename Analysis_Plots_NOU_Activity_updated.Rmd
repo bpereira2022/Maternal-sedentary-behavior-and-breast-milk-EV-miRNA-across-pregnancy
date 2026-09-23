@@ -1,0 +1,447 @@
+---
+title: "Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence for early-mid gestation sensitivity"
+author: "Beatriz B. Elliott"
+date: "2026-09-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+set.seed(123)
+```
+
+# 1) Package installation and loading
+
+```{r packages}
+install_if_missing <- function(pkgs, bioc = FALSE) {
+  for (pkg in pkgs) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      if (bioc) {
+        if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+        BiocManager::install(pkg, ask = FALSE, update = FALSE)
+      } else {
+        install.packages(pkg)
+      }
+    }
+  }
+}
+
+cran_pkgs <- c(
+  "dplyr", "forcats", "ggplot2", "ggrepel", "matrixStats", "patchwork",
+  "pheatmap", "RColorBrewer", "readr", "tibble", "viridis"
+)
+bioc_pkgs <- c("DESeq2", "EnhancedVolcano", "vsn")
+
+install_if_missing(cran_pkgs, bioc = FALSE)
+install_if_missing(bioc_pkgs, bioc = TRUE)
+
+library(DESeq2)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(ggrepel)
+library(matrixStats)
+library(EnhancedVolcano)
+library(readr)
+library(tibble)
+library(vsn)
+```
+
+# 2) Data import, alignment, and shared preprocessing
+
+```{r load_data}
+counts <- read.csv("Merged_Count.csv", row.names = 1, header = TRUE, check.names = FALSE)
+coldata <- read.csv("ColData.csv", row.names = 1, check.names = FALSE)
+
+common_samples <- intersect(colnames(counts), rownames(coldata))
+counts <- counts[, common_samples, drop = FALSE]
+coldata <- coldata[common_samples, , drop = FALSE]
+
+# Recompute quartile labels from continuous variables so results are reproducible
+# even when quartile columns are left blank in ColData.csv.
+format_threshold <- function(x, digits = 1) {
+  out <- format(round(x, digits), nsmall = digits, trim = TRUE, scientific = FALSE)
+  sub("\\.0$", "", out)
+}
+
+make_quartile_labels <- function(x, digits = 1) {
+  q1 <- as.numeric(stats::quantile(x, 0.25, na.rm = TRUE))
+  q3 <- as.numeric(stats::quantile(x, 0.75, na.rm = TRUE))
+  dplyr::case_when(
+    is.na(x)   ~ NA_character_,
+    x <= q1    ~ paste0("Lower than or equal to ", format_threshold(q1, digits)),
+    x >= q3    ~ paste0("Greater than or equal to ", format_threshold(q3, digits)),
+    TRUE       ~ "Interquartile range"
+  )
+}
+
+required_numeric_cols <- c(
+  "mvpa_trimester1", "mvpa_trimester2", "mvpa_trimester3", "mvpa_postpartum",
+  "sed60num_trimester1", "sed60num_trimester2", "sed60num_trimester3", "sed60num_postpartum"
+)
+
+missing_cols <- setdiff(required_numeric_cols, colnames(coldata))
+if (length(missing_cols) > 0) {
+  stop("Missing required columns in ColData.csv: ", paste(missing_cols, collapse = ", "))
+}
+
+coldata <- coldata %>%
+  mutate(
+    mvpa_quartile_trimester1   = make_quartile_labels(mvpa_trimester1),
+    mvpa_quartile_trimester2   = make_quartile_labels(mvpa_trimester2),
+    mvpa_quartile_trimester3   = make_quartile_labels(mvpa_trimester3),
+    mvpa_quartile_postpartum   = make_quartile_labels(mvpa_postpartum),
+    sed60num_quartile_trimester1 = make_quartile_labels(sed60num_trimester1),
+    sed60num_quartile_trimester2 = make_quartile_labels(sed60num_trimester2),
+    sed60num_quartile_trimester3 = make_quartile_labels(sed60num_trimester3),
+    sed60num_quartile_postpartum = make_quartile_labels(sed60num_postpartum)
+  )
+
+# Filter low-count miRNAs once and reuse objects across chunks
+dds0 <- DESeqDataSetFromMatrix(countData = counts, colData = coldata, design = ~ 1)
+dds0 <- dds0[rowSums(counts(dds0) >= 5) >= 3, ]
+
+miRNA_for_background <- rownames(dds0)
+write.table(miRNA_for_background, file = "DIANA_background_miRNAs.txt",
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+vsd <- varianceStabilizingTransformation(dds0, blind = TRUE)
+count_mat <- assay(vsd)
+
+# PCA on top variable miRNAs for correlation/regression analyses
+n_top <- 500
+rv <- rowVars(count_mat)
+top_genes <- order(rv, decreasing = TRUE)[seq_len(min(n_top, length(rv)))]
+mat_top <- count_mat[top_genes, , drop = FALSE]
+pc_top <- prcomp(t(mat_top), center = TRUE, scale. = TRUE)
+percentVar_top <- 100 * (pc_top$sdev^2) / sum(pc_top$sdev^2)
+
+scores_top <- as.data.frame(pc_top$x) %>%
+  rownames_to_column("Sample") %>%
+  left_join(rownames_to_column(as.data.frame(coldata), var = "Sample"), by = "Sample")
+
+jn_theme <- theme_classic(base_size = 10) +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.4),
+    axis.ticks = element_line(color = "black", linewidth = 0.4),
+    axis.text = element_text(color = "black", size = 9),
+    axis.title = element_text(size = 10),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 9),
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 8),
+    plot.margin = margin(4, 6, 4, 4)
+  )
+```
+
+# 3) Figure 5 — QC, PCA, and Top miRNAs
+
+## Figure 5A — Qubit concentrations
+
+```{r fig5A}
+rna_conc <- data.frame(
+  ID = factor(c("NOU-1002", "NOU-1009", "NOU-1016", "NOU-1019", "NOU-1004",
+                "NOU-1010", "NOU-1017", "NOU-1020", "NOU-1006", "NOU-1011", "NOU-1018"),
+              levels = c("NOU-1002", "NOU-1009", "NOU-1016", "NOU-1019", "NOU-1004",
+                         "NOU-1010", "NOU-1017", "NOU-1020", "NOU-1006", "NOU-1011", "NOU-1018")),
+  RNA_conc = c(146, 57.6, 73, 87.8, 50, 52.8, 64.9, 353, 30, 79, 161)
+)
+
+p_rna <- ggplot(rna_conc, aes(x = ID, y = RNA_conc)) +
+  geom_col(fill = "#2a6f84", color = NA, width = 0.6) +
+  scale_y_continuous(breaks = seq(0, 400, by = 50), expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Sample ID", y = "RNA Concentration (Qubit) (ng/uL)") +
+  jn_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
+
+ggsave("Figure_4A.tiff", plot = p_rna, device = "tiff", dpi = 300,
+       width = 17, height = 10, units = "cm", compression = "lzw", bg = "white")
+```
+
+## Figure 5B — Raw vs normalized library sizes
+
+```{r fig5B}
+dds_qc <- estimateSizeFactors(dds0)
+raw_totals <- colSums(counts(dds_qc, normalized = FALSE))
+norm_totals <- colSums(counts(dds_qc, normalized = TRUE))
+all_totals <- rbind(raw = raw_totals, normalized = norm_totals)
+
+tiff("Figure_4B.tiff", width = 17, height = 10, units = "cm", res = 300, compress = "lzw")
+par(mar = c(8, 5, 1, 1))
+barplot(all_totals, beside = TRUE, las = 2, col = c("skyblue", "lightgreen"), ylab = "")
+title(ylab = "Total counts", line = 3.5)
+legend("topright", legend = c("Raw", "Normalized"), fill = c("skyblue", "lightgreen"))
+dev.off()
+```
+
+## Figure 5C,D — PCA and top 20 most expressed miRNAs
+
+```{r fig5CD}
+pca_all <- prcomp(t(count_mat), center = TRUE, scale. = FALSE)
+percentVar_all <- 100 * (pca_all$sdev^2) / sum(pca_all$sdev^2)
+
+scores_all <- as.data.frame(pca_all$x[, 1:2]) %>%
+  rownames_to_column("Sample")
+
+p_pca <- ggplot(scores_all, aes(x = PC1, y = PC2, label = Sample)) +
+  geom_point(aes(color = Sample), size = 2.5, alpha = 0.9, show.legend = FALSE) +
+  geom_text_repel(size = 2.5, max.overlaps = Inf, box.padding = 0.4,
+                  point.padding = 0.3, min.segment.length = 0.2, color = "grey30") +
+  labs(x = paste0("PC1 (", round(percentVar_all[1], 1), "% variance)"),
+       y = paste0("PC2 (", round(percentVar_all[2], 1), "% variance)")) +
+  jn_theme
+
+ggsave("Figure_4C.tiff", plot = p_pca, device = "tiff", dpi = 300,
+       width = 8, height = 8, units = "cm", compression = "lzw", bg = "white")
+
+top20 <- count_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("miRNA") %>%
+  rowwise() %>%
+  mutate(mean_vst = mean(c_across(where(is.numeric)))) %>%
+  ungroup() %>%
+  slice_max(mean_vst, n = 20) %>%
+  mutate(miRNA = fct_reorder(miRNA, mean_vst))
+
+p_top20 <- ggplot(top20, aes(x = miRNA, y = mean_vst)) +
+  geom_col(fill = "pink", color = NA, width = 0.7) +
+  coord_flip() +
+  labs(x = NULL, y = "Mean VST-normalized expression") +
+  jn_theme +
+  theme(axis.text.y = element_text(face = "italic", size = 8))
+
+ggsave("Figure_4D.tiff", plot = p_top20, device = "tiff", dpi = 300,
+       width = 8, height = 9, units = "cm", compression = "lzw", bg = "white")
+```
+
+# 4) Figure 6 — Correlation analysis and regression plot
+
+```{r fig6}
+run_correlation <- function(x, y, method = c("pearson", "spearman"), B = 5000, exact = FALSE) {
+  method <- match.arg(method)
+  complete_idx <- complete.cases(x, y)
+  x <- x[complete_idx]
+  y <- y[complete_idx]
+
+  if (length(x) < 3) {
+    return(list(cor_test = NULL, boot_CI = c(NA_real_, NA_real_), n = length(x)))
+  }
+
+  cor_res <- cor.test(x, y, method = method, exact = if (method == "spearman") exact else NULL)
+  boot_vals <- replicate(B, {
+    idx <- sample(seq_along(x), replace = TRUE)
+    cor(x[idx], y[idx], method = method)
+  })
+  boot_CI <- quantile(boot_vals, probs = c(0.025, 0.975), na.rm = TRUE)
+
+  list(cor_test = cor_res, boot_CI = boot_CI, n = length(x))
+}
+
+PCs <- c("PC1", "PC2")
+predictor <- "sed60num_postpartum"
+quartile_col <- "sed60num_quartile_postpartum"
+
+for (pc in PCs) {
+  res_pearson <- run_correlation(scores_top[[pc]], coldata[[predictor]], method = "pearson", B = 5000)
+  res_spearman <- run_correlation(scores_top[[pc]], coldata[[predictor]], method = "spearman", exact = TRUE, B = 5000)
+
+  cat("\nPearson Correlation -", pc, "\n")
+  if (is.null(res_pearson$cor_test)) {
+    cat("Insufficient complete observations.\n")
+  } else {
+    print(res_pearson$cor_test)
+    cat("Bootstrap 95% CI:\n")
+    print(res_pearson$boot_CI)
+  }
+
+  cat("\nSpearman Correlation -", pc, "\n")
+  if (is.null(res_spearman$cor_test)) {
+    cat("Insufficient complete observations.\n")
+  } else {
+    print(res_spearman$cor_test)
+    cat("Bootstrap 95% CI:\n")
+    print(res_spearman$boot_CI)
+  }
+}
+
+plot_df <- scores_top %>%
+  mutate(
+    Predictor = .data[[predictor]],
+    Quartile = factor(.data[[quartile_col]])
+  )
+
+ggplot(plot_df, aes(x = Predictor, y = PC2, color = Quartile)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", color = "black", se = TRUE) +
+  scale_color_manual(values = c(
+    "Lower than or equal to 341.7" = "red",
+    "Interquartile range" = "darkgreen",
+    "Greater than or equal to 431.1" = "royalblue"
+  )) +
+  labs(
+    title = "PC2 vs. SED60+ (T4) by Quartile",
+    x = "Minutes/day in moderate to sedentary bouts greater than or equal to 60 minutes",
+    y = "PC2",
+    color = "Quartile"
+  ) +
+  theme_classic()
+```
+
+# 5) Differential expression — DESeq2
+
+```{r deseq2}
+run_deseq <- function(coldata, counts, group_col, ref_level, contrast_levels, output_file) {
+  coldata_filt <- coldata %>%
+    dplyr::select(all_of(group_col)) %>%
+    filter(!is.na(.data[[group_col]]), .data[[group_col]] != "Interquartile range") %>%
+    mutate(Group = ifelse(grepl("Lower", .data[[group_col]]), "Low", "High")) %>%
+    dplyr::select(Group)
+
+  coldata_filt$Group <- factor(coldata_filt$Group, levels = c("Low", "High"))
+
+  if (nrow(coldata_filt) < 2 || length(unique(coldata_filt$Group)) < 2) {
+    message("Skipping ", group_col, " due to insufficient Low/High samples.")
+    write.csv(data.frame(), output_file, row.names = FALSE)
+    return(NULL)
+  }
+
+  counts_filt <- counts[, rownames(coldata_filt), drop = FALSE]
+  dds <- DESeqDataSetFromMatrix(countData = counts_filt, colData = coldata_filt, design = ~ Group)
+  dds <- estimateSizeFactors(dds)
+  dds <- dds[rowSums(counts(dds, normalized = TRUE) >= 5) >= 3, ]
+
+  if (nrow(dds) == 0) {
+    message("No features passed filtering for ", group_col)
+    write.csv(data.frame(), output_file, row.names = FALSE)
+    return(NULL)
+  }
+
+  dds$Group <- relevel(dds$Group, ref = ref_level)
+  dds <- DESeq(dds)
+  res <- results(dds, contrast = contrast_levels)
+
+  degs <- na.omit(res[which(res$padj < 0.10), ])
+  write.csv(as.data.frame(degs), output_file)
+  res
+}
+
+results_activity_T1 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester1", "High", c("Group", "Low", "High"),
+  "results_activity_T1_DEGs_NAomit.csv")
+
+results_activity_T2 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester2", "High", c("Group", "Low", "High"),
+  "results_activity_T2_DEGs_NAomit.csv")
+
+results_activity_T3 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester3", "High", c("Group", "Low", "High"),
+  "results_activity_T3_DEGs_NAomit.csv")
+
+results_activity_PP <- run_deseq(coldata, counts,
+  "sed60num_quartile_postpartum", "High", c("Group", "Low", "High"),
+  "results_activity_PP_DEGs_NAomit.csv")
+```
+
+# 6) Figure 7 — Volcano plots
+
+```{r fig7}
+make_volcano <- function(results_obj, title, subtitle, output_file) {
+  if (is.null(results_obj)) {
+    message("Skipping volcano plot for ", output_file, " (no DESeq results).")
+    return(NULL)
+  }
+
+  df <- as.data.frame(results_obj)
+  n_total <- sum(!is.na(df$padj))
+
+  p <- EnhancedVolcano(
+    df,
+    lab = rownames(df),
+    x = "log2FoldChange",
+    y = "padj",
+    title = title,
+    subtitle = subtitle,
+    titleLabSize = 16,
+    subtitleLabSize = 13,
+    pCutoff = 0.054,
+    FCcutoff = 1.0,
+    pointSize = 2.0,
+    labSize = 5.0,
+    colAlpha = 0.6,
+    selectLab = rownames(df)[!is.na(df$padj) & df$padj < 0.054],
+    drawConnectors = TRUE,
+    widthConnectors = 0.5,
+    max.overlaps = 50,
+    legendPosition = "right",
+    legendLabels = c("NS", "Log2FC", "P-value", "P-value + Log2FC"),
+    col = c("grey60", "#0072B2", "#CC79A7", "#009E73"),
+    xlim = c(-6, 6),
+    ylim = c(0, 3.5),
+    caption = paste0("total = ", n_total, " variables")
+  ) +
+    theme(axis.text = element_text(size = 11), axis.title = element_text(size = 13))
+
+  ggsave(output_file, plot = p, width = 10, height = 8, dpi = 300, compression = "lzw")
+  p
+}
+
+fig7A <- make_volcano(results_activity_T1,
+  title = "Trimester One Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  output_file = "Figure_7A.tiff")
+
+fig7B <- make_volcano(results_activity_T2,
+  title = "Trimester Two Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  output_file = "Figure_7B.tiff")
+
+fig7C <- make_volcano(results_activity_T3,
+  title = "Trimester Three Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  output_file = "Figure_7C.tiff")
+```
+
+# 7) Figure 8A — Bubble plot
+
+```{r fig8A}
+pathway_file <- if (file.exists("T2_sednum60_pathways.csv")) {
+  "T2_sednum60_pathways.csv"
+} else {
+  file.path("Pathway Analysis Files", "T2_sednum60_pathways.csv")
+}
+bubble_data <- read_csv(pathway_file, show_col_types = FALSE)
+
+bubble_data$`GO Biological Process Complete Term` <- factor(
+  bubble_data$`GO Biological Process Complete Term`,
+  levels = rev(unique(bubble_data %>%
+    arrange(Bonferroni) %>%
+    pull(`GO Biological Process Complete Term`)))
+)
+
+fig8A <- ggplot(
+  bubble_data,
+  aes(x = "Targets of upregulated miRNAs of:", y = `GO Biological Process Complete Term`)
+) +
+  geom_point(aes(size = `Fold Enrichment`, color = -log10(Bonferroni))) +
+  scale_color_viridis_c(option = "viridis", name = "-log10(Bonferroni)") +
+  scale_size_continuous(name = "Fold Enrichment") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Top Enriched Pathways in Trimester Two",
+    x = "minutes/day in bouts ≥60 min in sedentary bouts",
+    y = "Enriched GO Term"
+  ) +
+  theme(
+    plot.title = element_text(size = 15, hjust = 0.5),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    axis.text.y = element_text(size = 11),
+    axis.text.x = element_text(size = 11),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11)
+  )
+
+ggsave("Figure_8A.tiff", plot = fig8A, width = 12, height = 10, dpi = 300, compression = "lzw")
+```
