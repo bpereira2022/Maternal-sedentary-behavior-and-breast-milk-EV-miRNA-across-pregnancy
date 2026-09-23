@@ -1,0 +1,1582 @@
+---
+title: "Maternal sedentary behavior and breast milk EV miRNA across pregnancy: evidence
+  for early-mid gestation sensitivity"
+author: "Beatriz B. Elliott"
+date: "2026-01-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# PACKAGE INSTALLATION AND LOADING
+```{r packages}
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!requireNamespace("DESeq2",      quietly = TRUE)) BiocManager::install("DESeq2")
+if (!requireNamespace("vsn",         quietly = TRUE)) BiocManager::install("vsn")
+if (!requireNamespace("pheatmap",    quietly = TRUE)) install.packages("pheatmap")
+if (!requireNamespace("RColorBrewer",quietly = TRUE)) install.packages("RColorBrewer")
+if (!requireNamespace("ggplot2",     quietly = TRUE)) install.packages("ggplot2")
+if (!requireNamespace("matrixStats", quietly = TRUE)) install.packages("matrixStats")
+if (!requireNamespace("tidyverse",   quietly = TRUE)) install.packages("tidyverse")
+if (!requireNamespace("patchwork",   quietly = TRUE)) install.packages("patchwork")
+if (!requireNamespace("EnhancedVolcano", quietly = TRUE)) BiocManager::install("EnhancedVolcano")
+if (!requireNamespace("readr",       quietly = TRUE)) install.packages("readr")
+
+library(DESeq2)
+library(vsn)
+library(pheatmap)
+library(RColorBrewer)
+library(ggplot2)
+library(matrixStats)
+library(tidyverse)
+library(patchwork)
+library(EnhancedVolcano)
+library(readr)
+library(dplyr)
+```
+
+# LOAD DATA 
+```{r load_data}
+set.seed(123)
+
+counts  <- read.csv("Merged_Count.csv", row.names = 1, header = TRUE, check.names = FALSE)
+coldata <- read.csv("ColData.csv", row.names = 1)
+common  <- intersect(colnames(counts), rownames(coldata))
+counts  <- counts[, common, drop = FALSE]
+coldata <- coldata[common, , drop = FALSE]
+
+# ---- Sedentary-behavior quartile cut-points ----
+recompute_quartile_labels <- function(x, digits = 1) {
+  q1 <- quantile(x, probs = 0.25, na.rm = TRUE, type = 7)
+  q3 <- quantile(x, probs = 0.75, na.rm = TRUE, type = 7)
+  case_when(
+    x <= q1 ~ paste0("Lower than or equal to ", round(q1, digits)),
+    x >= q3 ~ paste0("Greater than or equal to ", round(q3, digits)),
+    TRUE    ~ "Interquartile range"
+  )
+}
+
+coldata$sed60num_quartile_trimester1 <- recompute_quartile_labels(coldata$sed60num_trimester1)
+coldata$sed60num_quartile_trimester2 <- recompute_quartile_labels(coldata$sed60num_trimester2)
+coldata$sed60num_quartile_trimester3 <- recompute_quartile_labels(coldata$sed60num_trimester3)
+coldata$sed60num_quartile_postpartum <- recompute_quartile_labels(coldata$sed60num_postpartum)
+coldata$mvpa_quartile_trimester1     <- recompute_quartile_labels(coldata$mvpa_trimester1)
+coldata$mvpa_quartile_trimester2     <- recompute_quartile_labels(coldata$mvpa_trimester2)
+coldata$mvpa_quartile_trimester3     <- recompute_quartile_labels(coldata$mvpa_trimester3)
+coldata$mvpa_quartile_postpartum     <- recompute_quartile_labels(coldata$mvpa_postpartum)
+
+# DESeqDataSet — filtered
+dds0 <- DESeqDataSetFromMatrix(countData = counts, colData = coldata, design = ~ 1)
+dds0 <- dds0[rowSums(counts(dds0) >= 5) >= 3, ]
+
+# Save background miRNA list for DIANA
+miRNA_for_background <- rownames(dds0)
+write.table(miRNA_for_background, file = "DIANA_background_miRNAs.txt",
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# VST for PCA and expression plots
+vsd <- varianceStabilizingTransformation(dds0, blind = TRUE)
+count_mat <- assay(vsd)
+
+# ---- Shared theme ----
+jn_theme <- theme_classic(base_size = 10) +
+  theme(
+    axis.line        = element_line(color = "black", linewidth = 0.4),
+    axis.ticks       = element_line(color = "black", linewidth = 0.4),
+    axis.text        = element_text(color = "black", size = 9),
+    axis.title       = element_text(size = 10),
+    panel.grid       = element_blank(),
+    panel.border     = element_blank(),
+    strip.background = element_blank(),
+    strip.text       = element_text(size = 9),
+    legend.title     = element_text(size = 9),
+    legend.text      = element_text(size = 8),
+    plot.margin      = margin(4, 6, 4, 4)
+  )
+```
+
+# FIGURE 5 — QC, PCA, Top miRNAs
+# Note: Panels B–D generated individually; combined and lettered in PowerPoint.
+
+## Figure 5A — Qubit Concentrations of the Samples
+```{r}
+rna_conc <- data.frame(
+  ID = factor(c("NOU-1002", "NOU-1009", "NOU-1016", "NOU-1019", "NOU-1004",
+                 "NOU-1010", "NOU-1017", "NOU-1020", "NOU-1006", "NOU-1011", "NOU-1018"),
+              levels = c("NOU-1002", "NOU-1009", "NOU-1016", "NOU-1019", "NOU-1004",
+                         "NOU-1010", "NOU-1017", "NOU-1020", "NOU-1006", "NOU-1011", "NOU-1018")),
+  RNA_conc = c(146, 57.6, 73, 87.8, 50, 52.8, 64.9, 353, 30, 79, 161)
+)
+
+p_rna <- ggplot(rna_conc, aes(x = ID, y = RNA_conc)) +
+  geom_col(fill = "#2a6f84", color = NA, width = 0.6) +
+  scale_y_continuous(breaks = seq(0, 400, by = 50), expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Sample ID", y = "RNA Concentration (Qubit) (ng/uL)") +
+  jn_theme +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9)
+  )
+
+ggsave("Figure_4A.tiff", plot = p_rna, device = "tiff", dpi = 300,
+       width = 17, height = 10, units = "cm", compression = "lzw", bg = "white")
+```
+
+## Figure 5B — Raw vs Normalized Library Sizes
+```{r fig5B}
+dds_qc <- estimateSizeFactors(dds0)
+
+raw_totals  <- colSums(counts(dds_qc, normalized = FALSE))
+norm_totals <- colSums(counts(dds_qc, normalized = TRUE))
+all_totals  <- rbind(raw = raw_totals, normalized = norm_totals)
+
+tiff("Figure_4B.tiff",
+     width = 17, height = 10, units = "cm", res = 300, compress = "lzw")
+
+par(mar = c(8, 5, 1, 1))   # extra bottom margin for rotated labels
+
+barplot(
+  all_totals,
+  beside = TRUE,
+  las    = 2,
+  col    = c("skyblue", "lightgreen"),
+  ylab   = ""
+)
+title(ylab = "Total counts", line = 3.5)
+legend("topright", legend = c("Raw", "Normalized"), fill = c("skyblue", "lightgreen"))
+
+dev.off()
+```
+
+## Figure 5C,D — PCA Plot (PC1 vs PC2, labeled by Sample ID) ; Top 20 Most Expressed miRNAs (Mean VST-normalized expression)
+```{r fig5C}
+mat <- count_mat
+
+# ---- Panel C: PCA ----
+pca        <- prcomp(t(mat), center = TRUE, scale. = FALSE)
+percentVar <- 100 * (pca$sdev^2) / sum(pca$sdev^2)
+
+cat("Variance explained (%):\n")
+print(round(percentVar[1:5], 2))
+
+scores <- as.data.frame(pca$x[, 1:2]) %>%
+  rownames_to_column("Sample")
+
+p_pca <- ggplot(scores, aes(x = PC1, y = PC2, label = Sample)) +
+  geom_point(aes(color = Sample), size = 2.5, alpha = 0.9, show.legend = FALSE) +
+  geom_text_repel(size = 2.5, max.overlaps = Inf, box.padding = 0.4,
+                  point.padding = 0.3, min.segment.length = 0.2, color = "grey30") +
+  labs(x = paste0("PC1 (", round(percentVar[1], 1), "% variance)"),
+       y = paste0("PC2 (", round(percentVar[2], 1), "% variance)")) +
+  jn_theme
+
+ggsave("Figure_4C.tiff", plot = p_pca, device = "tiff", dpi = 300,
+       width = 8, height = 8, units = "cm", compression = "lzw", bg = "white")
+
+# ---- Panel D: Top 20 most expressed miRNAs ----
+top20 <- mat %>%
+  as.data.frame() %>%
+  rownames_to_column("miRNA") %>%
+  rowwise() %>%
+  mutate(mean_vst = mean(c_across(where(is.numeric)))) %>%
+  ungroup() %>%
+  slice_max(mean_vst, n = 20) %>%
+  mutate(miRNA = fct_reorder(miRNA, mean_vst))
+
+p_top20 <- ggplot(top20, aes(x = miRNA, y = mean_vst)) +
+  geom_col(fill = "pink", color = NA, width = 0.7) +
+  coord_flip() +
+  labs(x = NULL, y = "Mean VST-normalized expression") +
+  jn_theme +
+  theme(axis.text.y = element_text(face = "italic", size = 8))
+
+ggsave("Figure_4D.tiff", plot = p_top20, device = "tiff", dpi = 300,
+       width = 8, height = 9, units = "cm", compression = "lzw", bg = "white")
+```
+
+# FIGURE 6 — Correlation Analysis + Regression Plots: PC1 & PC2 vs SED60+ and MVPA30
+```{r fig6}
+# PCA (numerical) using VST + prcomp on top variable genes
+library(DESeq2)
+library(matrixStats)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+
+set.seed(123)
+
+# ---- 0. Load Data & Align ----
+counts <- read.csv("Merged_Count.csv", row.names = 1, check.names = FALSE)
+coldata <- read.csv("ColData.csv", row.names = 1)
+common <- intersect(colnames(counts), rownames(coldata))
+counts <- counts[, common, drop = FALSE]
+coldata <- coldata[common, , drop = FALSE]
+coldata$sed60num_quartile_trimester1 <- recompute_quartile_labels(coldata$sed60num_trimester1)
+coldata$sed60num_quartile_trimester2 <- recompute_quartile_labels(coldata$sed60num_trimester2)
+coldata$sed60num_quartile_trimester3 <- recompute_quartile_labels(coldata$sed60num_trimester3)
+coldata$sed60num_quartile_postpartum <- recompute_quartile_labels(coldata$sed60num_postpartum)
+coldata$mvpa_quartile_trimester1     <- recompute_quartile_labels(coldata$mvpa_trimester1)
+coldata$mvpa_quartile_trimester2     <- recompute_quartile_labels(coldata$mvpa_trimester2)
+coldata$mvpa_quartile_trimester3     <- recompute_quartile_labels(coldata$mvpa_trimester3)
+coldata$mvpa_quartile_postpartum     <- recompute_quartile_labels(coldata$mvpa_postpartum)
+
+# ---- 1. DESeqDataSet and Filter Low-count Features ----
+dds0 <- DESeqDataSetFromMatrix(countData = counts, colData = coldata, design = ~ 1)
+keep <- rowSums(counts(dds0) >= 5) >= 3
+dds0 <- dds0[keep, ]
+
+# ---- 2. Variance Stabilizing Transformation (VST) ----
+vsd <- varianceStabilizingTransformation(dds0, blind = TRUE)
+mat <- assay(vsd)
+
+# ---- 3. Select Top Variable Genes ----
+n_top <- 500
+rv <- rowVars(mat)
+top_genes <- order(rv, decreasing = TRUE)[seq_len(min(n_top, length(rv)))]
+mat_top <- mat[top_genes, , drop = FALSE]
+
+# ---- 4. Perform PCA ----
+pc <- prcomp(t(mat_top), center = TRUE, scale. = TRUE)
+percentVar <- 100 * (pc$sdev^2) / sum(pc$sdev^2)
+pvar_df <- tibble(PC = paste0("PC", seq_along(percentVar)), PercentVariance = percentVar)
+
+# Sample scores
+scores <- as.data.frame(pc$x) %>%
+  rownames_to_column("Sample") %>%
+  left_join(rownames_to_column(as.data.frame(coldata), var = "Sample"), by = "Sample")
+
+# Gene loadings
+loadings <- as.data.frame(pc$rotation) %>%
+  rownames_to_column("Feature")
+
+# ---- 5. Save Outputs (Uncomment to save) ----
+# write.csv(pvar_df, "PCA_percent_variance.csv", row.names = FALSE)
+# write.csv(scores, "PCA_sample_scores.csv", row.names = FALSE)
+# write.csv(loadings, "PCA_feature_loadings_topGenes.csv", row.names = FALSE)
+
+# ---- 6. Correlation Analysis ----
+run_correlation <- function(x, y, method = c("pearson", "spearman"), B = 5000, exact = FALSE) {
+  method <- match.arg(method)
+  complete_idx <- complete.cases(x, y)
+  x <- x[complete_idx]
+  y <- y[complete_idx]
+  
+  # Correlation test
+  cor_res <- cor.test(x, y, method = method, exact = if (method == "spearman") exact else NULL)
+  
+  # Bootstrap
+  boot_vals <- replicate(B, {
+    idx <- sample(seq_along(x), replace = TRUE)
+    cor(x[idx], y[idx], method = method)
+  })
+  
+  boot_CI <- quantile(boot_vals, probs = c(0.025, 0.975))
+  
+  list(cor_test = cor_res, boot_CI = boot_CI, n = length(x))
+}
+
+# Run correlation analysis (Pearson & Spearman) across ALL FOUR timepoints
+PCs <- c("PC1", "PC2")
+timepoint_labels <- c(T1 = "Trimester 1", T2 = "Trimester 2",
+                       T3 = "Trimester 3", PP = "Postpartum")
+
+activity_vars <- list(
+  Sedentary = c(T1 = "sed60num_trimester1", T2 = "sed60num_trimester2",
+                T3 = "sed60num_trimester3", PP = "sed60num_postpartum"),
+  MVPA      = c(T1 = "mvpa_trimester1",     T2 = "mvpa_trimester2",
+                T3 = "mvpa_trimester3",     PP = "mvpa_postpartum")
+)
+
+B <- 5000
+
+# One row per test to run: 2 activities x 4 timepoints x 2 PCs = 16 rows.
+# Building this as a plain data frame up front (instead of a nested for
+# loop) makes it easy to see exactly which 16 tests are being run.
+test_plan <- expand.grid(
+  Activity  = names(activity_vars),
+  Timepoint = names(timepoint_labels),
+  PC        = PCs,
+  stringsAsFactors = FALSE
+)
+
+correlation_results <- vector("list", nrow(test_plan))
+
+for (i in seq_len(nrow(test_plan))) {
+  activity  <- test_plan$Activity[i]
+  tp        <- test_plan$Timepoint[i]
+  pc        <- test_plan$PC[i]
+  predictor <- activity_vars[[activity]][[tp]]
+
+  res_pearson  <- run_correlation(scores[[pc]], coldata[[predictor]],
+                                   method = "pearson", B = B)
+  res_spearman <- run_correlation(scores[[pc]], coldata[[predictor]],
+                                   method = "spearman", exact = TRUE, B = B)
+
+  correlation_results[[i]] <- data.frame(
+    Activity          = activity,
+    Timepoint         = tp,
+    PC                = pc,
+    pearson_r         = unname(res_pearson$cor_test$estimate),
+    pearson_p         = res_pearson$cor_test$p.value,
+    pearson_boot_lo   = res_pearson$boot_CI[1],
+    pearson_boot_hi   = res_pearson$boot_CI[2],
+    spearman_rho      = unname(res_spearman$cor_test$estimate),
+    spearman_p        = res_spearman$cor_test$p.value,
+    spearman_boot_lo  = res_spearman$boot_CI[1],
+    spearman_boot_hi  = res_spearman$boot_CI[2],
+    n                 = res_pearson$n
+  )
+}
+
+correlation_summary <- bind_rows(correlation_results)
+
+correlation_summary$pearson_p_adj_BH  <- p.adjust(correlation_summary$pearson_p, method = "BH")
+
+correlation_summary$spearman_p_adj_BH <- p.adjust(correlation_summary$spearman_p, method = "BH")
+rownames(correlation_summary) <- NULL
+
+print(correlation_summary)
+write.csv(correlation_summary, "PC_Correlation_Summary_Full16.csv", row.names = FALSE)
+
+# ---- Table (Pearson r/p and Spearman rho/p side-by-side) ----
+sig_stars <- function(p) case_when(
+  p < 0.001 ~ "***",
+  p < 0.01  ~ "**",
+  p < 0.05  ~ "*",
+  TRUE      ~ ""
+)
+
+table_S3_style <- correlation_summary %>%
+  mutate(
+    Timepoint       = factor(timepoint_labels[Timepoint],
+                        levels = c("Trimester 1", "Trimester 2", "Trimester 3", "Postpartum")),
+    Pearson_r_p     = paste0(sprintf("%.2f", pearson_r), " (p = ", sprintf("%.3f", pearson_p), ")", sig_stars(pearson_p)),
+    Spearman_rho_p  = paste0(sprintf("%.2f", spearman_rho), " (p = ", sprintf("%.3f", spearman_p), ")", sig_stars(spearman_p)),
+    Pearson_p_adj_BH  = sprintf("%.3f", pearson_p_adj_BH),
+    Spearman_p_adj_BH = sprintf("%.3f", spearman_p_adj_BH)
+  ) %>%
+  arrange(Activity, Timepoint, PC) %>%
+  dplyr::select(Activity, Timepoint, PC, Pearson_r_p, Spearman_rho_p,
+                Pearson_p_adj_BH, Spearman_p_adj_BH, n)
+
+colnames(table_S3_style) <- c("Activity", "Timepoint", "PC", "Pearson r (p)",
+                               "Spearman \u03C1 (p)", "BH-adj. Pearson p",
+                               "BH-adj. Spearman p", "n")
+
+write.csv(table_S3_style, "TableS3_PC_Correlations_Full16.csv", row.names = FALSE)
+knitr::kable(table_S3_style,
+             caption = "PC1/PC2 vs. sedentary behavior and MVPA, all timepoints (n=11). BH correction applied across all 16 tests, separately for Pearson and Spearman. *p<0.05 **p<0.01 ***p<0.001 (unadjusted).")
+```
+
+# ============================================================
+# DIAGNOSTIC — PCA Loading Contribution 
+# ============================================================
+```{r pca_loading_contribution}
+mirna_to_check <- "hsa-miR-148a-3p"
+n_pca_genes    <- nrow(loadings)   # genes actually used in PCA (top 500, or fewer if <500 passed filtering)
+expected_uniform_pct <- 100 / n_pca_genes
+
+contribution_df <- loadings %>%
+  mutate(
+    PC1_contribution_pct = (PC1^2) * 100,
+    PC2_contribution_pct = (PC2^2) * 100
+  ) %>%
+  arrange(desc(PC2_contribution_pct))
+
+mirna_row <- contribution_df %>% filter(Feature == mirna_to_check)
+
+cat("PCA was built from", n_pca_genes, "miRNAs.\n")
+cat("Expected contribution per gene if all contributed equally:",
+    round(expected_uniform_pct, 3), "%\n\n")
+
+for (pc_col in c("PC1_contribution_pct", "PC2_contribution_pct")) {
+  vals      <- contribution_df[[pc_col]]
+  pc_name   <- sub("_contribution_pct", "", pc_col)
+  rank_val  <- match(mirna_row[[pc_col]], sort(vals, decreasing = TRUE))
+  fold_over <- mirna_row[[pc_col]] / expected_uniform_pct
+  z_val     <- (mirna_row[[pc_col]] - mean(vals)) / sd(vals)
+
+  cat(pc_name, ": ", mirna_to_check, " contributes ", round(mirna_row[[pc_col]], 2),
+      "% (rank ", rank_val, " of ", n_pca_genes, "; ", round(fold_over, 1),
+      "x the expected uniform share; z = ", round(z_val, 1), " vs. the other ",
+      n_pca_genes - 1, " genes)\n", sep = "")
+}
+cat("\n")
+
+write.csv(contribution_df %>% dplyr::select(Feature, PC1_contribution_pct, PC2_contribution_pct),
+          "PCA_Loading_Contributions_AllGenes.csv", row.names = FALSE)
+
+top10_pc1 <- contribution_df %>% arrange(desc(PC1_contribution_pct)) %>%
+  slice_head(n = 10) %>% dplyr::select(Feature, PC1_contribution_pct)
+top10_pc2 <- contribution_df %>% arrange(desc(PC2_contribution_pct)) %>%
+  slice_head(n = 10) %>% dplyr::select(Feature, PC2_contribution_pct)
+
+knitr::kable(top10_pc1, digits = 2, caption = "Top 10 contributors to PC1 (% of variance).")
+knitr::kable(top10_pc2, digits = 2, caption = "Top 10 contributors to PC2 (% of variance) -- the sedentary/MVPA-associated axis.")
+
+# ---- Bar plot of top contributors, miR-148a-3p highlighted, with a
+# reference line at the "if every gene contributed equally" baseline ----
+plot_contribution <- function(df, pc_col, pc_label, highlight = mirna_to_check, top_n = 20) {
+  plot_df <- df %>%
+    arrange(desc(.data[[pc_col]])) %>%
+    slice_head(n = top_n) %>%
+    mutate(Feature   = factor(Feature, levels = rev(Feature)),
+           Highlight = ifelse(Feature == highlight, "miR-148a-3p", "Other"))
+
+  ggplot(plot_df, aes(x = Feature, y = .data[[pc_col]], fill = Highlight)) +
+    geom_col() +
+    geom_hline(yintercept = expected_uniform_pct, linetype = "dashed", color = "grey40") +
+    coord_flip() +
+    scale_fill_manual(values = c("miR-148a-3p" = "firebrick", "Other" = "grey60")) +
+    labs(title    = paste0("Top ", top_n, " contributors to ", pc_label),
+         subtitle = paste0("Dashed line = expected contribution if all ", n_pca_genes, " genes contributed equally"),
+         x = NULL, y = "% contribution to component") +
+    theme_classic() +
+    theme(legend.position = "none")
+}
+
+fig_contrib_pc1 <- plot_contribution(contribution_df, "PC1_contribution_pct", "PC1")
+fig_contrib_pc2 <- plot_contribution(contribution_df, "PC2_contribution_pct", "PC2")
+
+fig_contrib_pc1
+fig_contrib_pc2
+
+ggsave("Figure_PCA_Contribution_PC1.tiff", plot = fig_contrib_pc1, device = "tiff", dpi = 300,
+       width = 14, height = 10, units = "cm", compression = "lzw", bg = "white")
+ggsave("Figure_PCA_Contribution_PC2.tiff", plot = fig_contrib_pc2, device = "tiff", dpi = 300,
+       width = 14, height = 10, units = "cm", compression = "lzw", bg = "white")
+```
+
+# ============================================================
+# SENSITIVITY ANALYSIS — PCA Quartile vs. Continuous Concordance (n=11)
+# ============================================================
+```{r pca_concordance}
+quartile_col_map <- list(
+  Sedentary = c(T1 = "sed60num_quartile_trimester1", T2 = "sed60num_quartile_trimester2",
+                T3 = "sed60num_quartile_trimester3", PP = "sed60num_quartile_postpartum"),
+  MVPA      = c(T1 = "mvpa_quartile_trimester1",     T2 = "mvpa_quartile_trimester2",
+                T3 = "mvpa_quartile_trimester3",     PP = "mvpa_quartile_postpartum")
+)
+
+compare_pca_quartile_continuous <- function(scores, pc, quartile_labels,
+                                            pearson_r, pearson_p,
+                                            spearman_rho, spearman_p, label) {
+  low_mask  <- grepl("^Lower",   quartile_labels)
+  high_mask <- grepl("^Greater", quartile_labels)
+
+  pc_low  <- scores[[pc]][low_mask]
+  pc_high <- scores[[pc]][high_mask]
+
+  wt <- wilcox.test(pc_high, pc_low, exact = FALSE)
+  mean_diff <- mean(pc_high) - mean(pc_low)   # High - Low, on the PC score
+
+  # Continuous correlation direction is with respect to the RAW predictor
+  # (higher predictor = more sedentary/more active), so a positive
+  # mean_diff (PC score higher in the High-predictor group) is the SAME
+  # real-world direction as a positive Pearson r for both Sedentary and
+  # MVPA here -- unlike the DE models, the PCA correlation was always run
+  # against the raw continuous predictor (never a Low-vs-High DESeq2
+  # contrast), so there is no sign-convention mismatch to correct for.
+  same_direction <- sign(mean_diff) == sign(pearson_r)
+
+  data.frame(
+    Comparison   = label,
+    n_low        = length(pc_low),
+    n_high       = length(pc_high),
+    mean_diff_High_minus_Low = mean_diff,
+    wilcox_p     = wt$p.value,
+    pearson_r    = pearson_r,
+    pearson_p    = pearson_p,
+    spearman_rho = spearman_rho,
+    spearman_p   = spearman_p,
+    `Same direction (extreme groups vs. continuous)?` = ifelse(same_direction, "Yes", "No")
+  )
+}
+
+pca_concordance_results <- vector("list", nrow(test_plan))
+
+for (i in seq_len(nrow(test_plan))) {
+  activity <- test_plan$Activity[i]
+  tp       <- test_plan$Timepoint[i]
+  pc       <- test_plan$PC[i]
+  qcol     <- quartile_col_map[[activity]][[tp]]
+
+  stats_row <- correlation_summary %>%
+    filter(Activity == activity, Timepoint == tp, PC == pc)
+
+  pca_concordance_results[[i]] <- compare_pca_quartile_continuous(
+    scores, pc, coldata[[qcol]],
+    pearson_r    = stats_row$pearson_r,
+    pearson_p    = stats_row$pearson_p,
+    spearman_rho = stats_row$spearman_rho,
+    spearman_p   = stats_row$spearman_p,
+    label        = paste0(activity, " ", pc, " (", timepoint_labels[[tp]], ")")
+  )
+}
+
+pca_quartile_continuous_concordance <- bind_rows(pca_concordance_results)
+pca_quartile_continuous_concordance$wilcox_p_adj_BH <- p.adjust(
+  pca_quartile_continuous_concordance$wilcox_p, method = "BH")
+
+n_concordant <- sum(pca_quartile_continuous_concordance$`Same direction (extreme groups vs. continuous)?` == "Yes")
+cat(n_concordant, "/", nrow(pca_quartile_continuous_concordance),
+    "PC tests show the same real-world direction between the extreme-quartile",
+    "comparison and the full-sample continuous correlation.\n")
+
+write.csv(pca_quartile_continuous_concordance, "PCA_Quartile_vs_Continuous_Concordance.csv", row.names = FALSE)
+knitr::kable(pca_quartile_continuous_concordance, digits = 3,
+             caption = "PCA quartile (Low/Q1 vs. High/Q3, n=11) vs. continuous (Pearson/Spearman) concordance, all 16 PC x activity x timepoint tests.")
+```
+
+```{r fig6_regression}
+# ---- 8. Regression Plots (PC2 vs. sedentary behavior, all 4 timepoints),
+# annotated with BOTH the raw (unadjusted) and BH-adjusted p-values ----
+plot_pc2_vs_predictor <- function(scores, coldata, predictor_col, quartile_col,
+                                   tp_label, tp_key, correlation_summary) {
+  plot_df <- scores %>%
+    mutate(
+      Predictor = coldata[[predictor_col]],
+      # Simplify the exact numeric quartile label (e.g. "Lower than or
+      # equal to 94.3") down to a fixed 3-level group for coloring, so the
+      # color scale never has to change based on what the cut-point values
+      # happen to be.
+      QuartileGroup = case_when(
+        grepl("^Lower",   coldata[[quartile_col]]) ~ "Low (Q1)",
+        grepl("^Greater", coldata[[quartile_col]]) ~ "High (Q3)",
+        TRUE                                        ~ "Interquartile range"
+      ),
+      QuartileGroup = factor(QuartileGroup,
+                              levels = c("Low (Q1)", "Interquartile range", "High (Q3)"))
+    )
+
+  stats_row <- correlation_summary %>%
+    filter(Activity == "Sedentary", Timepoint == tp_key, PC == "PC2")
+
+  annotation_text <- paste0(
+    "Pearson r = ", sprintf("%.2f", stats_row$pearson_r),
+    ", p = ", sprintf("%.3f", stats_row$pearson_p),
+    " (BH-adj p = ", sprintf("%.3f", stats_row$pearson_p_adj_BH), ")\n",
+    "Spearman \u03C1 = ", sprintf("%.2f", stats_row$spearman_rho),
+    ", p = ", sprintf("%.3f", stats_row$spearman_p),
+    " (BH-adj p = ", sprintf("%.3f", stats_row$spearman_p_adj_BH), ")"
+  )
+
+  ggplot(plot_df, aes(x = Predictor, y = PC2, color = QuartileGroup)) +
+    geom_point(size = 3) +
+    geom_smooth(method = "lm", color = "black", se = TRUE) +
+    scale_color_manual(values = c("Low (Q1)" = "red",
+                                   "Interquartile range" = "darkgreen",
+                                   "High (Q3)" = "royalblue")) +
+    annotate("text", x = -Inf, y = Inf, label = annotation_text,
+             hjust = -0.05, vjust = 1.3, size = 3, fontface = "italic") +
+    labs(
+      title = paste0("PC2 vs. SED60+ (", tp_label, ") by Quartile"),
+      x = "Minutes/day in prolonged sedentary bouts (\u226560 minutes)",
+      y = "PC2",
+      color = "Quartile"
+    ) +
+    theme_classic()
+}
+
+fig6A <- plot_pc2_vs_predictor(scores, coldata, "sed60num_trimester1", "sed60num_quartile_trimester1",
+                       "Trimester 1", "T1", correlation_summary)
+fig6B <- plot_pc2_vs_predictor(scores, coldata, "sed60num_trimester2", "sed60num_quartile_trimester2",
+                       "Trimester 2", "T2", correlation_summary)
+fig6C <- plot_pc2_vs_predictor(scores, coldata, "sed60num_trimester3", "sed60num_quartile_trimester3",
+                       "Trimester 3", "T3", correlation_summary)
+fig6D <- plot_pc2_vs_predictor(scores, coldata, "sed60num_postpartum", "sed60num_quartile_postpartum",
+                       "Postpartum", "PP", correlation_summary)
+
+fig6A
+fig6B
+fig6C
+fig6D
+
+ggsave("Figure_6A.tiff", plot = fig6A, device = "tiff", dpi = 300,
+       width = 14, height = 11, units = "cm", compression = "lzw", bg = "white")
+ggsave("Figure_6B.tiff", plot = fig6B, device = "tiff", dpi = 300,
+       width = 14, height = 11, units = "cm", compression = "lzw", bg = "white")
+ggsave("Figure_6C.tiff", plot = fig6C, device = "tiff", dpi = 300,
+       width = 14, height = 11, units = "cm", compression = "lzw", bg = "white")
+ggsave("Figure_6D.tiff", plot = fig6D, device = "tiff", dpi = 300,
+       width = 14, height = 11, units = "cm", compression = "lzw", bg = "white")
+
+fig6_combined <- (fig6A + fig6B) / (fig6C + fig6D) +
+  plot_annotation(tag_levels = "A") +
+  plot_layout(guides = "collect") &
+  theme(plot.tag = element_text(face = "bold"),
+        legend.position = "bottom")
+
+ggsave("Figure_6_Combined.tiff", plot = fig6_combined, device = "tiff", dpi = 300,
+       width = 28, height = 22, units = "cm", compression = "lzw", bg = "white")
+
+```
+
+
+# miRNA DIFFERENTIAL EXPRESSION — DESeq2
+# Sedentary behavior (SED60+) and MVPA, all timepoints
+```{r deseq2}
+run_deseq <- function(coldata, counts, group_col, reference_group, comparison_group,
+                      output_file, group_labels = NULL) {
+  coldata_filt <- coldata %>%
+    dplyr::select(all_of(group_col)) %>%
+    filter(.data[[group_col]] != "Interquartile range") %>%
+    mutate(Group = ifelse(grepl("Lower", .data[[group_col]]), "Low", "High")) %>%
+    dplyr::select(Group)
+
+  coldata_filt$Group <- factor(coldata_filt$Group, levels = c("Low", "High"))
+  counts_filt        <- counts[, rownames(coldata_filt)]
+
+  dds <- DESeqDataSetFromMatrix(countData = counts_filt,
+                                colData   = coldata_filt,
+                                design    = ~ Group)
+  dds <- estimateSizeFactors(dds)
+  dds <- dds[rowSums(counts(dds, normalized = TRUE) >= 5) >= 3, ]
+  dds$Group <- relevel(dds$Group, ref = reference_group)
+  dds <- DESeq(dds)
+
+  res <- results(dds, contrast = c("Group", comparison_group, reference_group))
+
+  comparison_label <- if (!is.null(group_labels)) group_labels[[comparison_group]] else comparison_group
+  reference_label   <- if (!is.null(group_labels)) group_labels[[reference_group]]  else reference_group
+
+  degs <- na.omit(res[which(res$padj < 0.10), ])
+  degs_df <- as.data.frame(degs)
+  if (nrow(degs_df) > 0) {
+    degs_df$Contrast  <- paste0(comparison_label, " vs. ", reference_label)
+    degs_df$Direction <- ifelse(degs_df$log2FoldChange > 0,
+                                 paste0("Higher in ", comparison_label, " (positive log2FC)"),
+                                 paste0("Higher in ", reference_label, " (negative log2FC)"))
+  }
+  write.csv(degs_df, output_file)
+  return(res)
+}
+
+# ---- Sedentary behavior (SED60+): reference = High (Q3, more sedentary) ----
+sed_group_labels <- c(Low = "Low quartile (Q1, less sedentary)",
+                       High = "High quartile (Q3, more sedentary)")
+
+results_sedentary_T1 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester1", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_T1_DEGs_NAomit.csv", group_labels = sed_group_labels)
+
+results_sedentary_T2 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester2", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_T2_DEGs_NAomit.csv", group_labels = sed_group_labels)
+
+results_sedentary_T3 <- run_deseq(coldata, counts,
+  "sed60num_quartile_trimester3", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_T3_DEGs_NAomit.csv", group_labels = sed_group_labels)
+
+results_sedentary_PP <- run_deseq(coldata, counts,
+  "sed60num_quartile_postpartum", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_PP_DEGs_NAomit.csv", group_labels = sed_group_labels)
+```
+
+# ============================================================
+# miRNA DIFFERENTIAL EXPRESSION — DESeq2, MVPA (Table S5)
+# ============================================================
+```{r deseq2_mvpa}
+mvpa_group_labels <- c(Low = "Low quartile (Q1, less active/MVPA)",
+                        High = "High quartile (Q3, more active/MVPA)")
+
+results_mvpa_T1 <- run_deseq(coldata, counts,
+  "mvpa_quartile_trimester1", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_T1_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+
+results_mvpa_T2 <- run_deseq(coldata, counts,
+  "mvpa_quartile_trimester2", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_T2_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+
+results_mvpa_T3 <- run_deseq(coldata, counts,
+  "mvpa_quartile_trimester3", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_T3_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+
+results_mvpa_PP <- run_deseq(coldata, counts,
+  "mvpa_quartile_postpartum", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_PP_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+```
+
+# ============================================================
+# SENSITIVITY ANALYSIS — Continuous Predictor (full n=11, no quartile split)
+# ============================================================
+```{r deseq2_continuous}
+run_deseq_continuous <- function(coldata, counts, predictor_col, output_file, label) {
+  coldata_filt <- coldata %>% dplyr::select(all_of(predictor_col))
+  # Z-score the continuous predictor so log2FC is expressed "per 1 SD
+  # increase in <predictor>" -- keeps coefficients interpretable and
+  # comparable across variables/timepoints with very different raw units
+  # and ranges (e.g. sedentary minutes/day vs. MVPA minutes/day).
+  coldata_filt$Predictor_z <- as.numeric(scale(coldata_filt[[predictor_col]]))
+  counts_filt <- counts[, rownames(coldata_filt)]
+
+  dds <- DESeqDataSetFromMatrix(countData = counts_filt,
+                                colData   = coldata_filt,
+                                design    = ~ Predictor_z)
+  dds <- estimateSizeFactors(dds)
+  dds <- dds[rowSums(counts(dds, normalized = TRUE) >= 5) >= 3, ]
+  dds <- DESeq(dds)
+
+  res <- results(dds, name = "Predictor_z")
+
+  degs <- na.omit(res[which(res$padj < 0.10), ])
+  degs_df <- as.data.frame(degs)
+  if (nrow(degs_df) > 0) {
+    degs_df$Contrast <- paste0(label, " (continuous, per 1 SD, n=", ncol(dds), ")")
+  }
+  write.csv(degs_df, output_file)
+  return(res)
+}
+
+# ---- Run for all 4 timepoints, both activity variables (full n=11 each) ----
+results_sedentary_T1_cont <- run_deseq_continuous(coldata, counts,
+  "sed60num_trimester1", "results_sedentary_T1_continuous_DEGs_NAomit.csv", "Sedentary T1")
+results_sedentary_T2_cont <- run_deseq_continuous(coldata, counts,
+  "sed60num_trimester2", "results_sedentary_T2_continuous_DEGs_NAomit.csv", "Sedentary T2")
+results_sedentary_T3_cont <- run_deseq_continuous(coldata, counts,
+  "sed60num_trimester3", "results_sedentary_T3_continuous_DEGs_NAomit.csv", "Sedentary T3")
+results_sedentary_PP_cont <- run_deseq_continuous(coldata, counts,
+  "sed60num_postpartum", "results_sedentary_PP_continuous_DEGs_NAomit.csv", "Sedentary PP")
+
+results_mvpa_T1_cont <- run_deseq_continuous(coldata, counts,
+  "mvpa_trimester1", "results_mvpa_T1_continuous_DEGs_NAomit.csv", "MVPA T1")
+results_mvpa_T2_cont <- run_deseq_continuous(coldata, counts,
+  "mvpa_trimester2", "results_mvpa_T2_continuous_DEGs_NAomit.csv", "MVPA T2")
+results_mvpa_T3_cont <- run_deseq_continuous(coldata, counts,
+  "mvpa_trimester3", "results_mvpa_T3_continuous_DEGs_NAomit.csv", "MVPA T3")
+results_mvpa_PP_cont <- run_deseq_continuous(coldata, counts,
+  "mvpa_postpartum", "results_mvpa_PP_continuous_DEGs_NAomit.csv", "MVPA PP")
+
+# ---- Concordance table ----
+compare_quartile_continuous <- function(quartile_res, continuous_res, label,
+                                        invert_continuous_sign = FALSE) {
+  q_df <- as.data.frame(quartile_res) %>%
+    rownames_to_column("miRNA") %>%
+    filter(!is.na(padj) & padj < 0.10) %>%
+    dplyr::select(miRNA, log2FC_quartile = log2FoldChange, padj_quartile = padj)
+
+  c_df <- as.data.frame(continuous_res) %>%
+    rownames_to_column("miRNA") %>%
+    dplyr::select(miRNA, log2FC_continuous = log2FoldChange,
+                  p_continuous = pvalue, padj_continuous = padj)
+
+  merged <- q_df %>%
+    inner_join(c_df, by = "miRNA") %>%
+    mutate(
+      Comparison = label,
+      log2FC_continuous_realworld = if (invert_continuous_sign) -log2FC_continuous else log2FC_continuous,
+      `Same direction?`     = dplyr::if_else(sign(log2FC_quartile) == sign(log2FC_continuous_realworld), "Yes", "No"),
+      `Nominally sig. (p<0.05) in continuous model?` = dplyr::if_else(!is.na(p_continuous) & p_continuous < 0.05, "Yes", "No")
+    )
+
+  if (nrow(merged) == 0) return(merged)
+
+  merged$padj_candidateset <- p.adjust(merged$p_continuous, method = "BH")
+
+  n_total      <- nrow(merged)
+  n_concordant <- sum(merged$`Same direction?` == "Yes")
+  n_confirmed  <- sum(merged$padj_candidateset < 0.10, na.rm = TRUE)
+  cat(label, ":", n_concordant, "/", n_total,
+      "quartile-significant miRNAs show the same real-world direction of effect,",
+      n_confirmed, "/", n_total,
+      "confirmed at candidate-restricted padj<0.10 in the continuous model.\n")
+
+  merged
+}
+
+concordance_T1 <- compare_quartile_continuous(results_sedentary_T1, results_sedentary_T1_cont,
+  "Sedentary T1", invert_continuous_sign = TRUE)
+concordance_T2 <- compare_quartile_continuous(results_sedentary_T2, results_sedentary_T2_cont,
+  "Sedentary T2", invert_continuous_sign = TRUE)
+concordance_T3 <- compare_quartile_continuous(results_sedentary_T3, results_sedentary_T3_cont,
+  "Sedentary T3", invert_continuous_sign = TRUE)
+concordance_PP <- compare_quartile_continuous(results_sedentary_PP, results_sedentary_PP_cont,
+  "Sedentary PP", invert_continuous_sign = TRUE)
+
+concordance_mvpa_T1 <- compare_quartile_continuous(results_mvpa_T1, results_mvpa_T1_cont, "MVPA T1")
+concordance_mvpa_T2 <- compare_quartile_continuous(results_mvpa_T2, results_mvpa_T2_cont, "MVPA T2")
+concordance_mvpa_T3 <- compare_quartile_continuous(results_mvpa_T3, results_mvpa_T3_cont, "MVPA T3")
+concordance_mvpa_PP <- compare_quartile_continuous(results_mvpa_PP, results_mvpa_PP_cont, "MVPA PP")
+
+
+quartile_continuous_concordance <- bind_rows(
+  concordance_T1, concordance_T2, concordance_T3, concordance_PP,
+  concordance_mvpa_T1, concordance_mvpa_T2, concordance_mvpa_T3, concordance_mvpa_PP
+)
+
+write.csv(quartile_continuous_concordance, "Quartile_vs_Continuous_Concordance.csv", row.names = FALSE)
+knitr::kable(quartile_continuous_concordance, digits = 3,
+             caption = "Quartile-significant miRNAs (padj<0.10): real-world direction of effect, nominal significance, and candidate-restricted FDR (padj_candidateset) in the full-n=11 continuous-predictor sensitivity model.")
+```
+
+# ============================================================
+# SENSITIVITY ANALYSIS — Full-Dispersion 3-Level Group Model (full n=11)
+# ============================================================
+```{r deseq2_full_dispersion}
+run_deseq_full_dispersion <- function(coldata, counts, group_col, reference_group, comparison_group,
+                                      output_file, group_labels = NULL) {
+  coldata_filt <- coldata %>%
+    dplyr::select(all_of(group_col)) %>%
+    mutate(Group3 = case_when(
+      grepl("Lower",   .data[[group_col]]) ~ "Low",
+      grepl("Greater", .data[[group_col]]) ~ "High",
+      TRUE                                 ~ "Mid"
+    )) %>%
+    dplyr::select(Group3)
+
+  coldata_filt$Group3 <- factor(coldata_filt$Group3, levels = c("Low", "Mid", "High"))
+  counts_filt <- counts[, rownames(coldata_filt)]   # ALL n=11 -- no samples dropped before fitting
+
+  dds <- DESeqDataSetFromMatrix(countData = counts_filt,
+                                colData   = coldata_filt,
+                                design    = ~ Group3)
+  dds <- estimateSizeFactors(dds)
+  dds <- dds[rowSums(counts(dds, normalized = TRUE) >= 5) >= 3, ]
+  dds$Group3 <- relevel(dds$Group3, ref = reference_group)
+  dds <- DESeq(dds)
+
+  # Still only extracting the Low vs. High contrast -- the a priori
+  # hypothesis is unchanged, only the dispersion/normalization fit uses
+  # more information now.
+  res <- results(dds, contrast = c("Group3", comparison_group, reference_group))
+
+  comparison_label <- if (!is.null(group_labels)) group_labels[[comparison_group]] else comparison_group
+  reference_label   <- if (!is.null(group_labels)) group_labels[[reference_group]]  else reference_group
+
+  degs <- na.omit(res[which(res$padj < 0.10), ])
+  degs_df <- as.data.frame(degs)
+  if (nrow(degs_df) > 0) {
+    degs_df$Contrast <- paste0(comparison_label, " vs. ", reference_label,
+                               " (dispersion/size factors fit on full n=", ncol(dds), ")")
+    degs_df$Direction <- ifelse(degs_df$log2FoldChange > 0,
+                                paste0("Higher in ", comparison_label, " (positive log2FC)"),
+                                paste0("Higher in ", reference_label, " (negative log2FC)"))
+  }
+  write.csv(degs_df, output_file)
+  return(res)
+}
+
+results_sedentary_T1_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "sed60num_quartile_trimester1", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_T1_fulldispersion_DEGs_NAomit.csv", group_labels = sed_group_labels)
+results_sedentary_T2_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "sed60num_quartile_trimester2", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_T2_fulldispersion_DEGs_NAomit.csv", group_labels = sed_group_labels)
+results_sedentary_T3_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "sed60num_quartile_trimester3", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_T3_fulldispersion_DEGs_NAomit.csv", group_labels = sed_group_labels)
+results_sedentary_PP_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "sed60num_quartile_postpartum", reference_group = "High", comparison_group = "Low",
+  output_file = "results_sedentary_PP_fulldispersion_DEGs_NAomit.csv", group_labels = sed_group_labels)
+
+results_mvpa_T1_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "mvpa_quartile_trimester1", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_T1_fulldispersion_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+results_mvpa_T2_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "mvpa_quartile_trimester2", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_T2_fulldispersion_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+results_mvpa_T3_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "mvpa_quartile_trimester3", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_T3_fulldispersion_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+results_mvpa_PP_fulldisp <- run_deseq_full_dispersion(coldata, counts,
+  "mvpa_quartile_postpartum", reference_group = "Low", comparison_group = "High",
+  output_file = "results_mvpa_PP_fulldispersion_DEGs_NAomit.csv", group_labels = mvpa_group_labels)
+
+# ---- Compare: does dispersion-sharing across the full n=11 change padj
+# for the miRNAs already flagged by the original (n=6-7) quartile model? ----
+compare_dispersion_approaches <- function(original_res, fulldisp_res, label) {
+  orig_df <- as.data.frame(original_res) %>%
+    rownames_to_column("miRNA") %>%
+    filter(!is.na(padj) & padj < 0.10) %>%
+    dplyr::select(miRNA, log2FC_original = log2FoldChange, padj_original = padj)
+
+  full_df <- as.data.frame(fulldisp_res) %>%
+    rownames_to_column("miRNA") %>%
+    dplyr::select(miRNA, log2FC_fulldispersion = log2FoldChange,
+                  padj_fulldispersion = padj)
+
+  merged <- orig_df %>%
+    inner_join(full_df, by = "miRNA") %>%
+    mutate(
+      Comparison = label,
+      `Padj improved?` = dplyr::if_else(padj_fulldispersion < padj_original, "Yes", "No")
+    )
+
+  if (nrow(merged) == 0) return(merged)
+
+  cat(label, ":", sum(merged$padj_fulldispersion < 0.10, na.rm = TRUE), "/", nrow(merged),
+      "still significant (padj<0.10) once dispersion is estimated on the full n=11.\n")
+
+  merged
+}
+
+dispersion_comparison <- bind_rows(
+  compare_dispersion_approaches(results_sedentary_T1, results_sedentary_T1_fulldisp, "Sedentary T1"),
+  compare_dispersion_approaches(results_sedentary_T2, results_sedentary_T2_fulldisp, "Sedentary T2"),
+  compare_dispersion_approaches(results_sedentary_T3, results_sedentary_T3_fulldisp, "Sedentary T3"),
+  compare_dispersion_approaches(results_sedentary_PP, results_sedentary_PP_fulldisp, "Sedentary PP"),
+  compare_dispersion_approaches(results_mvpa_T1, results_mvpa_T1_fulldisp, "MVPA T1"),
+  compare_dispersion_approaches(results_mvpa_T2, results_mvpa_T2_fulldisp, "MVPA T2"),
+  compare_dispersion_approaches(results_mvpa_T3, results_mvpa_T3_fulldisp, "MVPA T3"),
+  compare_dispersion_approaches(results_mvpa_PP, results_mvpa_PP_fulldisp, "MVPA PP")
+)
+
+write.csv(dispersion_comparison, "Quartile_vs_FullDispersion_Comparison.csv", row.names = FALSE)
+knitr::kable(dispersion_comparison, digits = 3,
+             caption = "Quartile-significant miRNAs (padj<0.10, original n=6-7 model): log2FC and padj when dispersion/size factors are instead estimated on the full n=11 (IQR participants retained in the fit, contrast still Low vs. High).")
+```
+
+# ============================================================
+# SENSITIVITY ANALYSIS — Trimester 2 with hsa-miR-148a-3p Excluded
+# ============================================================
+```{r sensitivity_exclude_148a}
+mirna_to_exclude <- "hsa-miR-148a-3p"
+
+counts_excl148a <- counts[rownames(counts) != mirna_to_exclude, , drop = FALSE]
+
+cat("Original count matrix:", nrow(counts), "miRNAs\n")
+cat("After excluding", mirna_to_exclude, ":", nrow(counts_excl148a), "miRNAs\n\n")
+
+run_excl148a_check <- function(original_res, quartile_col, reference_group, comparison_group,
+                               output_file, group_labels, label) {
+  res_excl <- run_deseq(coldata, counts_excl148a, quartile_col, reference_group, comparison_group,
+                        output_file, group_labels)
+
+  sig_with    <- rownames(original_res)[which(original_res$padj < 0.05)]
+  sig_without <- rownames(res_excl)[which(res_excl$padj < 0.05)]
+
+  compare_df <- data.frame(miRNA = union(sig_with, sig_without)) %>%
+    mutate(
+      Comparison             = label,
+      SignificantWith148a    = miRNA %in% sig_with,
+      SignificantWithout148a = miRNA %in% sig_without,
+      Status = case_when(
+        SignificantWith148a & SignificantWithout148a  ~ "Consistent (robust to exclusion)",
+        SignificantWith148a & !SignificantWithout148a ~ "Lost when miR-148a-3p excluded",
+        !SignificantWith148a & SignificantWithout148a ~ "Gained when miR-148a-3p excluded",
+        TRUE ~ NA_character_
+      )
+    )
+
+  cat(label, ":", length(sig_with), "sig WITH miR-148a-3p,", length(sig_without),
+      "sig WITHOUT; ", sum(compare_df$Status == "Consistent (robust to exclusion)", na.rm = TRUE),
+      "/", nrow(compare_df), "consistent.\n")
+
+  compare_df
+}
+
+# ---- All 4 timepoints, both activity variables (8 comparisons total) ----
+sensitivity_148a_all <- bind_rows(
+  run_excl148a_check(results_sedentary_T1, "sed60num_quartile_trimester1", "High", "Low",
+                     "results_sedentary_T1_excl148a_DEGs_NAomit.csv", sed_group_labels, "Sedentary T1"),
+  run_excl148a_check(results_sedentary_T2, "sed60num_quartile_trimester2", "High", "Low",
+                     "results_sedentary_T2_excl148a_DEGs_NAomit.csv", sed_group_labels, "Sedentary T2"),
+  run_excl148a_check(results_sedentary_T3, "sed60num_quartile_trimester3", "High", "Low",
+                     "results_sedentary_T3_excl148a_DEGs_NAomit.csv", sed_group_labels, "Sedentary T3"),
+  run_excl148a_check(results_sedentary_PP, "sed60num_quartile_postpartum", "High", "Low",
+                     "results_sedentary_PP_excl148a_DEGs_NAomit.csv", sed_group_labels, "Sedentary PP"),
+  run_excl148a_check(results_mvpa_T1, "mvpa_quartile_trimester1", "Low", "High",
+                     "results_mvpa_T1_excl148a_DEGs_NAomit.csv", mvpa_group_labels, "MVPA T1"),
+  run_excl148a_check(results_mvpa_T2, "mvpa_quartile_trimester2", "Low", "High",
+                     "results_mvpa_T2_excl148a_DEGs_NAomit.csv", mvpa_group_labels, "MVPA T2"),
+  run_excl148a_check(results_mvpa_T3, "mvpa_quartile_trimester3", "Low", "High",
+                     "results_mvpa_T3_excl148a_DEGs_NAomit.csv", mvpa_group_labels, "MVPA T3"),
+  run_excl148a_check(results_mvpa_PP, "mvpa_quartile_postpartum", "Low", "High",
+                     "results_mvpa_PP_excl148a_DEGs_NAomit.csv", mvpa_group_labels, "MVPA PP")
+)
+
+write.csv(sensitivity_148a_all, "Sensitivity_Exclude_miR148a_AllTimepoints.csv", row.names = FALSE)
+knitr::kable(sensitivity_148a_all,
+             caption = "Significance status with vs. without hsa-miR-148a-3p in the count matrix, all 8 quartile comparisons.")
+```
+
+# ============================================================
+# SENSITIVITY ANALYSIS — PCA Robustness to hsa-miR-148a-3p
+# ============================================================
+```{r pca_sensitivity_exclude_148a}
+dds0_excl148a <- DESeqDataSetFromMatrix(countData = counts_excl148a, colData = coldata, design = ~ 1)
+dds0_excl148a <- dds0_excl148a[rowSums(counts(dds0_excl148a) >= 5) >= 3, ]
+
+vsd_excl148a <- varianceStabilizingTransformation(dds0_excl148a, blind = TRUE)
+mat_excl148a <- assay(vsd_excl148a)
+
+was_in_top500 <- mirna_to_exclude %in% rownames(mat)[top_genes]
+cat(mirna_to_exclude, "was", ifelse(was_in_top500, "IN", "NOT in"),
+    "the original top-", n_top, "-most-variable-gene set used for PCA.\n\n")
+
+rv_excl148a <- rowVars(mat_excl148a)
+top_genes_excl148a <- order(rv_excl148a, decreasing = TRUE)[seq_len(min(n_top, length(rv_excl148a)))]
+mat_top_excl148a <- mat_excl148a[top_genes_excl148a, , drop = FALSE]
+
+pc_excl148a <- prcomp(t(mat_top_excl148a), center = TRUE, scale. = TRUE)
+percentVar_excl148a <- 100 * (pc_excl148a$sdev^2) / sum(pc_excl148a$sdev^2)
+
+cat("PC1 variance explained: original =", round(percentVar[1], 1),
+    "%, excl. miR-148a-3p =", round(percentVar_excl148a[1], 1), "%\n")
+cat("PC2 variance explained: original =", round(percentVar[2], 1),
+    "%, excl. miR-148a-3p =", round(percentVar_excl148a[2], 1), "%\n\n")
+
+scores_excl148a <- as.data.frame(pc_excl148a$x) %>%
+  rownames_to_column("Sample") %>%
+  left_join(rownames_to_column(as.data.frame(coldata), var = "Sample"), by = "Sample")
+
+# ---- Recompute the same 16-test (2 activity x 4 timepoint x 2 PC)
+# correlation grid on the miR-148a-3p-free PCA ----
+pca_excl148a_results <- vector("list", nrow(test_plan))
+for (i in seq_len(nrow(test_plan))) {
+  activity  <- test_plan$Activity[i]
+  tp        <- test_plan$Timepoint[i]
+  pc        <- test_plan$PC[i]
+  predictor <- activity_vars[[activity]][[tp]]
+
+  res_pearson  <- run_correlation(scores_excl148a[[pc]], coldata[[predictor]], method = "pearson", B = B)
+  res_spearman <- run_correlation(scores_excl148a[[pc]], coldata[[predictor]], method = "spearman", exact = TRUE, B = B)
+
+  pca_excl148a_results[[i]] <- data.frame(
+    Activity = activity, Timepoint = tp, PC = pc,
+    pearson_r_excl148a    = unname(res_pearson$cor_test$estimate),
+    pearson_p_excl148a    = res_pearson$cor_test$p.value,
+    spearman_rho_excl148a = unname(res_spearman$cor_test$estimate),
+    spearman_p_excl148a   = res_spearman$cor_test$p.value
+  )
+}
+pca_excl148a_summary <- bind_rows(pca_excl148a_results)
+pca_excl148a_summary$pearson_p_adj_BH_excl148a  <- p.adjust(pca_excl148a_summary$pearson_p_excl148a, method = "BH")
+pca_excl148a_summary$spearman_p_adj_BH_excl148a <- p.adjust(pca_excl148a_summary$spearman_p_excl148a, method = "BH")
+
+# ---- Side-by-side with the original (miR-148a-3p-included) correlations ----
+pca_148a_sensitivity <- correlation_summary %>%
+  dplyr::select(Activity, Timepoint, PC, pearson_r, pearson_p, pearson_p_adj_BH,
+                spearman_rho, spearman_p, spearman_p_adj_BH) %>%
+  left_join(pca_excl148a_summary, by = c("Activity", "Timepoint", "PC")) %>%
+  mutate(
+    `Pearson same direction?`  = dplyr::if_else(sign(pearson_r) == sign(pearson_r_excl148a), "Yes", "No"),
+    `Spearman same direction?` = dplyr::if_else(sign(spearman_rho) == sign(spearman_rho_excl148a), "Yes", "No")
+  )
+
+n_pearson_same <- sum(pca_148a_sensitivity$`Pearson same direction?` == "Yes")
+cat(n_pearson_same, "/", nrow(pca_148a_sensitivity),
+    "PC-activity-timepoint correlations retain the same direction with",
+    "miR-148a-3p excluded from the PCA input.\n")
+
+write.csv(pca_148a_sensitivity, "PCA_Sensitivity_Exclude_miR148a.csv", row.names = FALSE)
+knitr::kable(pca_148a_sensitivity, digits = 3,
+             caption = "PC1/PC2 vs. sedentary behavior and MVPA: original vs. hsa-miR-148a-3p-excluded PCA (VST, top-variable-gene selection, and prcomp rerun from scratch).")
+```
+
+# ============================================================
+# FIGURE 7 — Volcano Plots: SED60+ T1, T2, T3
+# ============================================================
+```{r fig7}
+make_volcano <- function(results_obj, title, subtitle, n_total, output_file) {
+  df <- as.data.frame(results_obj)
+
+  p <- EnhancedVolcano(
+    df,
+    lab          = rownames(df),
+    x            = "log2FoldChange",
+    y            = "padj",
+    title        = title,
+    subtitle     = subtitle,
+    titleLabSize    = 16,
+    subtitleLabSize = 13,
+    pCutoff      = 0.05,
+    FCcutoff     = 1.0,
+    pointSize    = 2.0,
+    labSize      = 5.0,
+    colAlpha     = 0.6,
+    selectLab    = rownames(df)[!is.na(df$padj) & df$padj < 0.05],
+    drawConnectors  = TRUE,
+    widthConnectors = 0.5,
+    max.overlaps    = 50,
+    legendPosition  = "right",
+    legendLabels    = c("NS", "Log2FC", "P-value", "P-value + Log2FC"),
+    col          = c("grey60", "#0072B2", "#CC79A7", "#009E73"),
+    xlim         = c(-6, 6),
+    ylim         = c(0, 3.5),
+    caption      = paste0("total = ", n_total, " variables")
+  ) +
+    theme(
+      axis.text  = element_text(size = 11),
+      axis.title = element_text(size = 13)
+    )
+
+  ggsave(output_file, plot = p,
+         width = 10, height = 8, dpi = 300, compression = "lzw")
+  return(p)
+}
+
+# Count total variables per timepoint (non-NA padj)
+n_T1 <- sum(!is.na(as.data.frame(results_sedentary_T1)$padj))
+n_T2 <- sum(!is.na(as.data.frame(results_sedentary_T2)$padj))
+n_T3 <- sum(!is.na(as.data.frame(results_sedentary_T3)$padj))
+
+fig7A <- make_volcano(results_sedentary_T1,
+  title    = "Trimester One Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  n_total  = n_T1,
+  output_file = "Figure_7A.tiff")
+
+fig7B <- make_volcano(results_sedentary_T2,
+  title    = "Trimester Two Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  n_total  = n_T2,
+  output_file = "Figure_7B.tiff")
+
+fig7C <- make_volcano(results_sedentary_T3,
+  title    = "Trimester Three Prolonged Sedentary Behavior",
+  subtitle = "Average minutes/day in sedentary bouts >=60 min, Q1 vs. Q3",
+  n_total  = n_T3,
+  output_file = "Figure_7C.tiff")
+```
+
+# ============================================================
+# SUPPLEMENTARY — Individual Normalized Counts for Significant miRNAs
+# ============================================================
+```{r indiv_counts_setup}
+# Rebuilds the same dds object used inside run_deseq() for a given timepoint,
+# but returns the dds itself (run_deseq() only returned results()) so we can
+# pull DESeq2-normalized counts per sample.
+get_dds_for_timepoint <- function(coldata, counts, group_col, ref_level) {
+  coldata_filt <- coldata %>%
+    dplyr::select(all_of(group_col)) %>%
+    filter(.data[[group_col]] != "Interquartile range") %>%
+    mutate(Group = ifelse(grepl("Lower", .data[[group_col]]), "Low", "High")) %>%
+    dplyr::select(Group)
+
+  coldata_filt$Group <- factor(coldata_filt$Group, levels = c("Low", "High"))
+  counts_filt        <- counts[, rownames(coldata_filt)]
+
+  dds <- DESeqDataSetFromMatrix(countData = counts_filt,
+                                colData   = coldata_filt,
+                                design    = ~ Group)
+  dds <- estimateSizeFactors(dds)
+  dds <- dds[rowSums(counts(dds, normalized = TRUE) >= 5) >= 3, ]
+  dds$Group <- relevel(dds$Group, ref = ref_level)
+  dds <- DESeq(dds)
+  return(dds)
+}
+
+export_individual_normcounts <- function(dds, degs_file, timepoint_label,
+                                          output_csv, output_plot = NULL,
+                                          point_size = 1.3) {
+  if (!file.exists(degs_file)) {
+    message("No DEG file found for ", timepoint_label, " — skipping.")
+    return(invisible(NULL))
+  }
+
+  degs <- read.csv(degs_file, row.names = 1)
+  sig_mirnas <- rownames(degs)
+
+  if (length(sig_mirnas) == 0) {
+    message("No significant miRNAs for ", timepoint_label, " — skipping.")
+    return(invisible(NULL))
+  }
+
+  norm_counts <- counts(dds, normalized = TRUE)
+  sig_mirnas  <- intersect(sig_mirnas, rownames(norm_counts))
+  norm_sub    <- norm_counts[sig_mirnas, , drop = FALSE]
+
+  long_df <- as.data.frame(norm_sub) %>%
+    rownames_to_column("miRNA") %>%
+    pivot_longer(-miRNA, names_to = "ParticipantID", values_to = "NormalizedCount") %>%
+    left_join(
+      as.data.frame(colData(dds)) %>% rownames_to_column("ParticipantID") %>%
+        dplyr::select(ParticipantID, Group),
+      by = "ParticipantID"
+    ) %>%
+    mutate(Timepoint = timepoint_label) %>%
+    arrange(miRNA, Group, ParticipantID)
+
+  write.csv(long_df, output_csv, row.names = FALSE)
+
+  n_mirna <- length(unique(long_df$miRNA))
+  
+  ncol_facet <- min(4, ceiling(sqrt(n_mirna)))
+
+  p <- ggplot(long_df, aes(x = Group, y = NormalizedCount, color = Group)) +
+    geom_jitter(width = 0.12, height = 0, size = point_size, alpha = 0.85) +
+    stat_summary(fun = mean, geom = "crossbar", width = 0.35,
+                 color = "black", linewidth = 0.3) +
+    facet_wrap(~ miRNA, scales = "free_y", ncol = ncol_facet) +
+    scale_color_manual(values = c("Low" = "red", "High" = "royalblue")) +
+    labs(
+      title = paste0("Individual Normalized Counts \u2014 ", timepoint_label),
+      x = NULL, y = "DESeq2-normalized count"
+    ) +
+    jn_theme +
+    theme(legend.position = "none",
+          strip.text = element_text(face = "italic", size = 8))
+
+  if (!is.null(output_plot)) {
+    ggsave(output_plot, plot = p,
+           width  = max(10, 6 * ncol_facet),
+           height = max(8, 6 * ceiling(n_mirna / ncol_facet)),
+           units = "cm", dpi = 300, compression = "lzw", bg = "white")
+  }
+
+  return(list(data = long_df, plot = p))
+}
+```
+
+```{r indiv_counts_run}
+# Focused on Trimester 1 and Trimester 2 (T2 has the most DEGs).
+dds_T1 <- get_dds_for_timepoint(coldata, counts, "sed60num_quartile_trimester1", "High")
+dds_T2 <- get_dds_for_timepoint(coldata, counts, "sed60num_quartile_trimester2", "High")
+# dds_T3 <- get_dds_for_timepoint(coldata, counts, "sed60num_quartile_trimester3", "High")
+# dds_PP <- get_dds_for_timepoint(coldata, counts, "sed60num_quartile_postpartum", "High")
+
+# ---- Dispersion shrinkage diagnostics ----
+
+tiff("DispersionEstimates_Trimester1.tiff", width = 14, height = 12,
+     units = "cm", res = 300, compression = "lzw")
+plotDispEsts(dds_T1, main = "Dispersion Estimates \u2014 Trimester 1 (Low vs. High, n=11)")
+dev.off()
+
+tiff("DispersionEstimates_Trimester2.tiff", width = 14, height = 12,
+     units = "cm", res = 300, compression = "lzw")
+plotDispEsts(dds_T2, main = "Dispersion Estimates \u2014 Trimester 2 (Low vs. High, n=11)")
+dev.off()
+
+# Also render inline in the knitted output
+plotDispEsts(dds_T1, main = "Dispersion Estimates \u2014 Trimester 1 (Low vs. High, n=11)")
+plotDispEsts(dds_T2, main = "Dispersion Estimates \u2014 Trimester 2 (Low vs. High, n=11)")
+
+res_T1 <- export_individual_normcounts(
+  dds_T1, "results_sedentary_T1_DEGs_NAomit.csv", "Trimester 1",
+  "Supplementary_IndividualCounts_T1.csv", "Supp_Figure_IndividualCounts_T1.tiff")
+
+res_T2 <- export_individual_normcounts(
+  dds_T2, "results_sedentary_T2_DEGs_NAomit.csv", "Trimester 2",
+  "Supplementary_IndividualCounts_T2.csv", "Supp_Figure_IndividualCounts_T2.tiff")
+
+# res_T3 <- export_individual_normcounts(
+#   dds_T3, "results_sedentary_T3_DEGs_NAomit.csv", "Trimester 3",
+#   "Supplementary_IndividualCounts_T3.csv", "Supp_Figure_IndividualCounts_T3.tiff")
+
+# res_PP <- export_individual_normcounts(
+#   dds_PP, "results_sedentary_PP_DEGs_NAomit.csv", "Postpartum",
+#   "Supplementary_IndividualCounts_PP.csv", "Supp_Figure_IndividualCounts_PP.tiff")
+
+# ---- Combine into one master supplementary table (T1 + T2) ----
+master_table <- bind_rows(res_T1$data, res_T2$data)
+
+write.csv(master_table, "Supplementary_Table_Individual_Normalized_Counts_ALL.csv",
+          row.names = FALSE)
+
+cat("Wrote", nrow(master_table), "rows covering",
+    length(unique(master_table$miRNA)), "unique significant miRNAs",
+    "across", length(unique(master_table$Timepoint)), "timepoints.\n")
+```
+
+# ============================================================
+# SUPPLEMENTARY — PC2 Loading Consistency for Significant miRNAs
+# ============================================================
+```{r pc2_consistency_setup}
+# `pc`, `loadings`, and `scores` come from the FIGURE 6 PCA chunk above
+# (prcomp on the top 500 most variable miRNAs; loadings = feature x PC
+# rotation matrix). We reuse them rather than recomputing PCA, so the
+# loading values here match what's reported in Figure 6.
+
+check_pc_consistency <- function(res, loadings, scores, coldata, predictor_col,
+                                  pc_col = "PC2", output_csv = NULL) {
+
+  # Empirical sign of the PC vs. continuous sedentary-behavior correlation —
+  # derived from the data rather than assumed, so this works regardless of
+  # timepoint or which way PC2 happens to point.
+  pred_vals <- coldata[scores$Sample, predictor_col]
+  corr_sign <- sign(cor(scores[[pc_col]], pred_vals,
+                         use = "complete.obs", method = "spearman"))
+
+  res_df <- as.data.frame(res) %>%
+    rownames_to_column("miRNA") %>%
+    filter(!is.na(padj) & padj < 0.10) %>%
+    dplyr::select(miRNA, log2FoldChange, padj)
+
+  loadings_pc <- loadings %>%
+    dplyr::select(Feature, Loading = all_of(pc_col)) %>%
+    dplyr::rename(miRNA = Feature)
+
+  # Flag any significant miRNAs that fell outside the top-500-variable set
+  # used for PCA (no loading available) — these can't be checked.
+  missing <- setdiff(res_df$miRNA, loadings_pc$miRNA)
+  if (length(missing) > 0) {
+    message("Note: ", length(missing),
+            " significant miRNA(s) not in the PCA feature set (no loading): ",
+            paste(missing, collapse = ", "))
+  }
+
+  out <- res_df %>%
+    inner_join(loadings_pc, by = "miRNA") %>%
+    mutate(
+      # Contrast is Low vs High (numerator = Low = less sedentary):
+      #   log2FC > 0  -> higher in Low  (less sedentary)
+      #   log2FC < 0  -> higher in High (sedentary)
+      `Direction in sedentary` = ifelse(log2FoldChange < 0,
+                                          "\u2191 in sedentary",
+                                          "\u2191 in less sedentary"),
+      `PC direction` = ifelse(Loading > 0,
+                               paste0("\u2191 with ", pc_col),
+                               paste0("\u2193 with ", pc_col)),
+      direction_actual  = -sign(log2FoldChange),      # +1 = up in sedentary
+      direction_implied = corr_sign * sign(Loading),  # what the PCA implies
+      `Consistent?` = ifelse(direction_actual == direction_implied, "Yes", "No")
+    ) %>%
+    dplyr::select(miRNA, log2FoldChange, `Direction in sedentary`,
+                  Loading, `PC direction`, `Consistent?`) %>%
+    arrange(desc(`Consistent?`))
+
+  # Rename the last two columns as a plain assignment (pc_col is usually
+  # "PC2", giving "log2FC" and "PC2 loading") instead of building the name
+  # dynamically inside rename().
+  colnames(out)[colnames(out) == "log2FoldChange"] <- "log2FC"
+  colnames(out)[colnames(out) == "Loading"] <- paste0(pc_col, " loading")
+
+  if (!is.null(output_csv)) write.csv(out, output_csv, row.names = FALSE)
+
+  cat(pc_col, "vs.", predictor_col, "correlation sign used:",
+      ifelse(corr_sign > 0, "positive", "negative"), "\n")
+
+  # ---- Binomial test: is the agreement rate better than chance (50%)? ----
+  # This is ONE aggregate test per timepoint (not one per miRNA) — the
+  # per-miRNA multiple-testing burden was already handled upstream by
+  # DESeq2's padj < 0.10 filter, so no further per-miRNA correction is
+  # needed here. If testing multiple timepoints, correct across those
+  # timepoint-level p-values (done in the calling chunk via p.adjust).
+  n_total      <- nrow(out)
+  n_consistent <- sum(out$`Consistent?` == "Yes")
+  binom_res    <- binom.test(n_consistent, n_total, p = 0.5,
+                              alternative = "two.sided")
+
+  cat(n_consistent, "/", n_total, "miRNAs directionally consistent",
+      "(raw binomial p =", signif(binom_res$p.value, 3), ")\n\n")
+
+  return(list(table = out,
+              n_consistent = n_consistent,
+              n_total = n_total,
+              p_value = binom_res$p.value))
+}
+```
+
+```{r pc2_consistency_run}
+# Focused on Trimester 1 and Trimester 2 (T2 has the most DEGs).
+consistency_T2 <- check_pc_consistency(
+  results_sedentary_T2, loadings, scores, coldata,
+  predictor_col = "sed60num_trimester2", pc_col = "PC2",
+  output_csv = "PC2_Consistency_T2.csv")
+
+consistency_T1 <- check_pc_consistency(
+  results_sedentary_T1, loadings, scores, coldata,
+  predictor_col = "sed60num_trimester1", pc_col = "PC2",
+  output_csv = "PC2_Consistency_T1.csv")
+
+# consistency_T3 <- check_pc_consistency(
+#   results_sedentary_T3, loadings, scores, coldata,
+#   predictor_col = "sed60num_trimester3", pc_col = "PC2",
+#   output_csv = "PC2_Consistency_T3.csv")
+
+# ---- BH-correct the two timepoint-level binomial p-values ----
+# (This corrects across the T1/T2 aggregate tests themselves — separate
+# from, and in addition to, the DESeq2 padj filtering already applied
+# per miRNA upstream.)
+raw_p  <- c(T1 = consistency_T1$p_value, T2 = consistency_T2$p_value)
+adj_p  <- p.adjust(raw_p, method = "BH")
+
+cat("Trimester 1:", consistency_T1$n_consistent, "/", consistency_T1$n_total,
+    "consistent | raw p =", signif(raw_p["T1"], 3),
+    "| BH-adjusted p =", signif(adj_p["T1"], 3), "\n")
+cat("Trimester 2:", consistency_T2$n_consistent, "/", consistency_T2$n_total,
+    "consistent | raw p =", signif(raw_p["T2"], 3),
+    "| BH-adjusted p =", signif(adj_p["T2"], 3), "\n")
+
+knitr::kable(
+  consistency_T2$table, digits = 3,
+  caption = paste0("Trimester 2: DE direction vs. PC2 loading direction (",
+                    consistency_T2$n_consistent, "/", consistency_T2$n_total,
+                    " consistent; BH-adjusted binomial p = ",
+                    signif(adj_p["T2"], 3), ")"))
+
+knitr::kable(
+  consistency_T1$table, digits = 3,
+  caption = paste0("Trimester 1: DE direction vs. PC2 loading direction (",
+                    consistency_T1$n_consistent, "/", consistency_T1$n_total,
+                    " consistent; BH-adjusted binomial p = ",
+                    signif(adj_p["T1"], 3), ")"))
+```
+
+# ============================================================
+# FIGURE 8A — Bubble Plot: Top Enriched Pathways in Trimester Two
+# ============================================================
+```{r fig8A}
+bubble_data <- read_csv("T2_sednum60_pathways.csv")
+
+bubble_data$`GO Biological Process Complete Term` <- factor(
+  bubble_data$`GO Biological Process Complete Term`,
+  levels = rev(unique(bubble_data %>%
+    arrange(Bonferroni) %>%
+    pull(`GO Biological Process Complete Term`)))
+)
+
+fig8A <- ggplot(bubble_data,
+    aes(x = "Targets of upregulated miRNAs of:",
+        y = `GO Biological Process Complete Term`)) +
+  geom_point(aes(size = `Fold Enrichment`, color = -log10(Bonferroni))) +
+  scale_color_viridis_c(option = "viridis", name = "-log10(Bonferroni)") +
+  scale_size_continuous(name = "Fold Enrichment") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Top Enriched Pathways in Trimester Two",
+    x     = "minutes/day in bouts \u226560 min in sedentary bouts",
+    y     = "Enriched GO Term"
+  ) +
+  theme(
+    plot.title      = element_text(size = 15, hjust = 0.5),
+    axis.title.x    = element_text(size = 13),
+    axis.title.y    = element_text(size = 13),
+    axis.text.y     = element_text(size = 11),
+    axis.text.x     = element_text(size = 11),
+    legend.title    = element_text(size = 12),
+    legend.text     = element_text(size = 11)
+  )
+
+ggsave("Figure_8A.tiff", plot = fig8A,
+       width = 12, height = 10, dpi = 300, compression = "lzw")
+```
+
+# ============================================================
+# FINAL OUTPUTS — gather everything needed to draw conclusions
+# ============================================================
+```{r final_outputs}
+final_dir <- "Final_Outputs"
+dir.create(final_dir, showWarnings = FALSE)
+
+final_files_by_category <- list(
+
+  "Differential_Expression" = c(
+    # Table 2 equivalents: sedentary behavior DE results, all timepoints
+    "results_sedentary_T1_DEGs_NAomit.csv",
+    "results_sedentary_T2_DEGs_NAomit.csv",
+    "results_sedentary_T3_DEGs_NAomit.csv",
+    "results_sedentary_PP_DEGs_NAomit.csv",
+    # Table S5 equivalents: MVPA DE results, all timepoints
+    "results_mvpa_T1_DEGs_NAomit.csv",
+    "results_mvpa_T2_DEGs_NAomit.csv",
+    "results_mvpa_T3_DEGs_NAomit.csv",
+    "results_mvpa_PP_DEGs_NAomit.csv",
+    # Volcano plots
+    "Figure_7A.tiff", "Figure_7B.tiff", "Figure_7C.tiff",
+    # Dispersion diagnostics
+    "DispersionEstimates_Trimester1.tiff",
+    "DispersionEstimates_Trimester2.tiff",
+    # Per-participant normalized counts for significant miRNAs
+    "Supplementary_Table_Individual_Normalized_Counts_ALL.csv",
+    "Supplementary_IndividualCounts_T1.csv",
+    "Supplementary_IndividualCounts_T2.csv",
+    "Supp_Figure_IndividualCounts_T1.tiff",
+    "Supp_Figure_IndividualCounts_T2.tiff"
+  ),
+
+  "PCA_and_Correlation" = c(
+    "Figure_4C.tiff", "Figure_4D.tiff",
+    "Figure_6A.tiff", "Figure_6B.tiff", "Figure_6C.tiff", "Figure_6D.tiff",
+    "TableS3_PC_Correlations_Full16.csv",
+    "PC_Correlation_Summary_Full16.csv",
+    "PC2_Consistency_T1.csv",
+    "PC2_Consistency_T2.csv",
+    "PCA_Loading_Contributions_AllGenes.csv",
+    "Figure_PCA_Contribution_PC1.tiff",
+    "Figure_PCA_Contribution_PC2.tiff",
+    "PCA_Quartile_vs_Continuous_Concordance.csv",
+    "PCA_Sensitivity_Exclude_miR148a.csv"
+  ),
+
+  "Sensitivity_Analyses" = c(
+    # miR-148a-3p exclusion (all 8 quartile comparisons)
+    "Sensitivity_Exclude_miR148a_AllTimepoints.csv",
+    "results_sedentary_T1_excl148a_DEGs_NAomit.csv",
+    "results_sedentary_T2_excl148a_DEGs_NAomit.csv",
+    "results_sedentary_T3_excl148a_DEGs_NAomit.csv",
+    "results_sedentary_PP_excl148a_DEGs_NAomit.csv",
+    "results_mvpa_T1_excl148a_DEGs_NAomit.csv",
+    "results_mvpa_T2_excl148a_DEGs_NAomit.csv",
+    "results_mvpa_T3_excl148a_DEGs_NAomit.csv",
+    "results_mvpa_PP_excl148a_DEGs_NAomit.csv",
+    # Continuous-predictor model (full n=11, no quartile split)
+    "results_sedentary_T1_continuous_DEGs_NAomit.csv",
+    "results_sedentary_T2_continuous_DEGs_NAomit.csv",
+    "results_sedentary_T3_continuous_DEGs_NAomit.csv",
+    "results_sedentary_PP_continuous_DEGs_NAomit.csv",
+    "results_mvpa_T1_continuous_DEGs_NAomit.csv",
+    "results_mvpa_T2_continuous_DEGs_NAomit.csv",
+    "results_mvpa_T3_continuous_DEGs_NAomit.csv",
+    "results_mvpa_PP_continuous_DEGs_NAomit.csv",
+    "Quartile_vs_Continuous_Concordance.csv",
+    # Full-dispersion 3-level group model (full n=11 used for dispersion/
+    # size factors; contrast still Low vs. High)
+    "results_sedentary_T1_fulldispersion_DEGs_NAomit.csv",
+    "results_sedentary_T2_fulldispersion_DEGs_NAomit.csv",
+    "results_sedentary_T3_fulldispersion_DEGs_NAomit.csv",
+    "results_sedentary_PP_fulldispersion_DEGs_NAomit.csv",
+    "results_mvpa_T1_fulldispersion_DEGs_NAomit.csv",
+    "results_mvpa_T2_fulldispersion_DEGs_NAomit.csv",
+    "results_mvpa_T3_fulldispersion_DEGs_NAomit.csv",
+    "results_mvpa_PP_fulldispersion_DEGs_NAomit.csv",
+    "Quartile_vs_FullDispersion_Comparison.csv"
+  ),
+
+  "QC" = c(
+    "Figure_4A.tiff",   # Qubit RNA concentrations
+    "Figure_4B.tiff"    # Raw vs. normalized library sizes
+  ),
+
+  "Pathway_Enrichment" = c(
+    "Figure_8A.tiff"
+  ),
+
+  "Background_Lists" = c(
+    "DIANA_background_miRNAs.txt"
+  )
+)
+
+copy_status_list <- vector("list", length(final_files_by_category))
+
+for (cat_i in seq_along(final_files_by_category)) {
+  category  <- names(final_files_by_category)[cat_i]
+  files     <- final_files_by_category[[cat_i]]
+  cat_dir   <- file.path(final_dir, category)
+  dir.create(cat_dir, showWarnings = FALSE, recursive = TRUE)
+
+  copied <- vapply(files, function(f) {
+    if (file.exists(f)) {
+      file.copy(f, file.path(cat_dir, f), overwrite = TRUE)
+      TRUE
+    } else {
+      FALSE
+    }
+  }, logical(1))
+
+  copy_status_list[[cat_i]] <- data.frame(
+    category = category,
+    file     = files,
+    copied   = unname(copied),
+    stringsAsFactors = FALSE
+  )
+
+  cat(sprintf("%-24s %d/%d files copied to %s/\n",
+              category, sum(copied), length(files), cat_dir))
+}
+
+copy_status <- bind_rows(copy_status_list)
+
+cat("\n", sum(copy_status$copied), "/", nrow(copy_status),
+    "total files copied across", length(final_files_by_category), "folders.\n\n")
+
+missing <- copy_status %>% filter(!copied)
+if (nrow(missing) > 0) {
+  cat("Not found (chunk may not have been run, or check filename):\n")
+  print(missing[, c("category", "file")])
+}
+
+write.csv(copy_status, file.path(final_dir, "_manifest.csv"), row.names = FALSE)
+```
