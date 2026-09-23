@@ -1,4 +1,4 @@
-# Maternal Sedentary Behavior and Breast Milk EV miRNA Across Pregnancy: Evidence for Early-Mid Gestation Sensitivity
+# Maternal Sedentary Behavior and Breast Milk EV miRNA Across Pregnancy: A Pilot Study
 
 **Author:** Beatriz B. Elliott  
 **Last updated:** 2026-01-21
