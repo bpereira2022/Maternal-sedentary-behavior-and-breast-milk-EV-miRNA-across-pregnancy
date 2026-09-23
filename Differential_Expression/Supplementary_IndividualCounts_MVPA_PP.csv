@@ -1,0 +1,7 @@
+"miRNA","ParticipantID","NormalizedCount","Group","Timepoint"
+"hsa-miR-223-3p","NOU-1016",34.569867215517,"Low","MVPA Postnatal"
+"hsa-miR-223-3p","NOU-1018",7.04622696910179,"Low","MVPA Postnatal"
+"hsa-miR-223-3p","NOU-1019",24.8833092617582,"Low","MVPA Postnatal"
+"hsa-miR-223-3p","NOU-1004",2601.47577912408,"High","MVPA Postnatal"
+"hsa-miR-223-3p","NOU-1010",136.770935727617,"High","MVPA Postnatal"
+"hsa-miR-223-3p","NOU-1020",6.89784755525579,"High","MVPA Postnatal"

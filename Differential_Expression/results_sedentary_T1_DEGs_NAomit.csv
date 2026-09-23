@@ -1,0 +1,2 @@
+"","baseMean","log2FoldChange","lfcSE","stat","pvalue","padj","Contrast","Direction"
+"hsa-miR-7-5p",1267.48524194273,-3.84639553710463,0.986786588553663,-3.89790009483439,9.70304284316255e-05,0.0218318463971157,"Low quartile (Q1, less sedentary) vs. High quartile (Q3, more sedentary)","Higher in High quartile (Q3, more sedentary) (negative log2FC)"

@@ -1,0 +1,2 @@
+"","baseMean","log2FoldChange","lfcSE","stat","pvalue","padj","Contrast","Direction"
+"hsa-miR-516b-5p",32.1684517169858,2.69333816383132,0.728483231575155,3.69718621801037,0.000218002428847519,0.0470885246310641,"High quartile (Q3, more active/MVPA) vs. Low quartile (Q1, less active/MVPA)","Higher in High quartile (Q3, more active/MVPA) (positive log2FC)"

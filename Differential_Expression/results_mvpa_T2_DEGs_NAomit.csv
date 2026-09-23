@@ -1,0 +1,4 @@
+"","baseMean","log2FoldChange","lfcSE","stat","pvalue","padj","Contrast","Direction"
+"hsa-miR-10a-5p",501.41198078908,2.2338228652168,0.558790087625313,3.99760646204349,6.39862151775966e-05,0.00697449745435803,"High quartile (Q3, more active/MVPA) vs. Low quartile (Q1, less active/MVPA)","Higher in High quartile (Q3, more active/MVPA) (positive log2FC)"
+"hsa-miR-143-3p",400.130601944312,2.68901468443397,0.574375731582001,4.68163004907542,2.84602754654144e-06,0.000620434005146035,"High quartile (Q3, more active/MVPA) vs. Low quartile (Q1, less active/MVPA)","Higher in High quartile (Q3, more active/MVPA) (positive log2FC)"
+"hsa-miR-151a-3p",9383.63430344047,1.80551808266531,0.528679319895434,3.41514792563177,0.000637473814390804,0.0463230971790651,"High quartile (Q3, more active/MVPA) vs. Low quartile (Q1, less active/MVPA)","Higher in High quartile (Q3, more active/MVPA) (positive log2FC)"
