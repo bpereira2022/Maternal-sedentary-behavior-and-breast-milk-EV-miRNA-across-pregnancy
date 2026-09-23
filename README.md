@@ -52,7 +52,6 @@ For each sample, the script runs the following steps:
 
 **Requires:** FastQC, BBTools (`bbduk.sh`), Cutadapt, Bowtie 1, SAMtools.
 ```
-
 ---
 
 ## Step 2: Statistical analysis (`Analysis_Plots_NOU_Activity.Rmd`)
