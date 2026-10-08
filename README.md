@@ -190,6 +190,6 @@ Record your exact versions with `sessionInfo()` after running.
 
 If you use this code or data, please cite the associated manuscript:
 
-> Elliott BB, *et al.* Maternal Sedentary Behavior and Breast Milk Extracellular Vesicle MicroRNA Across Pregnancy: A Pilot Study.
+> Elliott, B. B., Whitaker, K. M., Gallagher, J., Burnett, B., Shofner, I. J., Kerns, K., & McNeill, E. M. (2026). Maternal Sedentary Behavior and Breast Milk Extracellular Vesicle MicroRNA Across Pregnancy: A Pilot Study. Nutrients, 18(19), 3293. https://doi.org/10.3390/nu18193293
 
 **Contact:** Beatriz B. Elliott, GitHub: [@bpereira2022](https://github.com/bpereira2022)
