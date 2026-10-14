@@ -13,17 +13,17 @@ This project investigates the relationship between maternal physical activity pa
 
 ## Repository Contents
 
-| File | Description |
-|------|-------------|
+| File / Folder | Description |
+|---|---|
 | `Raw_Data_Processing.txt` | Bash pipeline for raw FASTQ processing through to mature miRNA counts |
 | `Merged_Count.csv` | Raw miRNA count matrix (2,655 miRNAs × 11 samples) |
 | `ColData.csv` | Sample metadata including MVPA and SED60+ values |
 | `Analysis_Plots_NOU_Activity.Rmd` | R Markdown file containing all QC, PCA, correlation, DESeq2, and figure generation code |
-| `QC` | Sample and library quality-control figures
-| `PCA_and_Correlation` | PCA, PC-vs-activity correlations, loading diagnostics
-| `Differential_Expression` | DESeq2 results (quartile model), volcano plots, per-sample counts
-| `Sensitivity_Analyses` | Robustness checks for the differential expression and PCA results
-| `Pathway Analysis Files` | Background miRNA list and GO pathway enrichment inputs/outputs
+| `QC/` | Sample and library quality-control figures |
+| `PCA_and_Correlation/` | PCA, PC-vs-activity correlations, loading diagnostics |
+| `Differential_Expression/` | DESeq2 results (quartile model), volcano plots, per-sample counts |
+| `Sensitivity_Analyses/` | Robustness checks for the differential expression and PCA results |
+| `Pathway Analysis Files/` | Background miRNA list and GO pathway enrichment inputs/outputs |
 
 ---
 
@@ -51,7 +51,7 @@ For each sample, the script runs the following steps:
 - The per-sample count tables are merged into `Merged_Count.csv` (one column per participant, renamed to `NOU-XXXX` IDs) before the R analysis.
 
 **Requires:** FastQC, BBTools (`bbduk.sh`), Cutadapt, Bowtie 1, SAMtools.
-```
+
 ---
 
 ## Step 2: Statistical analysis (`Analysis_Plots_NOU_Activity.Rmd`)
@@ -175,10 +175,12 @@ Record your exact versions with `sessionInfo()` after running.
 ## How to reproduce
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/bpereira2022/Maternal-sedentary-behavior-and-breast-milk-EV-miRNA-across-pregnancy.git
    cd Maternal-sedentary-behavior-and-breast-milk-EV-miRNA-across-pregnancy
    ```
+
 2. **(Optional) Regenerate counts from raw FASTQ.** Edit the paths and sample list in `Raw_Data_Processing.sh`, run it, and merge the per-sample count tables into `Merged_Count.csv`. This step requires the raw FASTQ files, which are not stored in this repository.
 3. **Run the analysis.** Open `Analysis_Plots_NOU_Activity.Rmd` in RStudio, set the working directory to the folder containing `Merged_Count.csv` and `ColData.csv`, and run all chunks (or knit).
 4. **Pathway enrichment.** Use `DIANA_background_miRNAs.txt` as the background and place the enrichment results at `T2_sednum60_pathways.csv` before running the Figure 8A chunk.
@@ -190,6 +192,6 @@ Record your exact versions with `sessionInfo()` after running.
 
 If you use this code or data, please cite the associated manuscript:
 
-> Elliott, B. B., Whitaker, K. M., Gallagher, J., Burnett, B., Shofner, I. J., Kerns, K., & McNeill, E. M. (2026). Maternal Sedentary Behavior and Breast Milk Extracellular Vesicle MicroRNA Across Pregnancy: A Pilot Study. Nutrients, 18(19), 3293. https://doi.org/10.3390/nu18193293
+> Elliott, B. B., Whitaker, K. M., Gallagher, J., Burnett, B., Shofner, I. J., Kerns, K., & McNeill, E. M. (2026). Maternal Sedentary Behavior and Breast Milk Extracellular Vesicle MicroRNA Across Pregnancy: A Pilot Study. *Nutrients*, 18(19), 3293. https://doi.org/10.3390/nu18193293
 
 **Contact:** Beatriz B. Elliott, GitHub: [@bpereira2022](https://github.com/bpereira2022)
